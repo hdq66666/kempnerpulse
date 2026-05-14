@@ -85,6 +85,20 @@ Or install from source:
 pip install .
 ```
 
+If you prefer not to perform a full installation, you can run the wrapper script directly from the login node by targeting your active GPU node.
+
+Identify your compute node:
+```bash
+squeue -u $USER
+```
+
+Execute the script (using holygpu8a11101 as an example):
+
+```bash
+./kempnerpulse-on-cnode.sh holygpu8a11101
+```
+
+
 ## Quick Start
 
 ```bash
