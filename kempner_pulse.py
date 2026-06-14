@@ -444,13 +444,14 @@ class CommandController:
             if ch == "\x1b" and chunk[i + 1:i + 2] == "[":
                 code = chunk[i + 2:i + 3]
                 if not self.command_mode:
+                    paged = chunk[i + 3:i + 4] == "~"   # PgUp/PgDn require the trailing '~'
                     if code == "A":            # up arrow
                         self.scroll_fleet(-1)
                     elif code == "B":          # down arrow
                         self.scroll_fleet(1)
-                    elif code == "5":          # PgUp  (ESC[5~)
+                    elif code == "5" and paged:        # PgUp  (ESC[5~)
                         self.scroll_fleet(-SCROLL_PAGE)
-                    elif code == "6":          # PgDn  (ESC[6~)
+                    elif code == "6" and paged:        # PgDn  (ESC[6~)
                         self.scroll_fleet(SCROLL_PAGE)
                 # advance past the sequence (4 bytes for ESC[5~ / ESC[6~, else 3)
                 i += 4 if code in ("5", "6") and chunk[i + 3:i + 4] == "~" else 3
@@ -1994,8 +1995,6 @@ CARD_2COL_MIN_WIDTH = (CARD_DETAIL_LABEL_MIN + CARD_DETAIL_LEFT_VALUE_MIN + CARD
                        + CARD_DETAIL_LABEL_MIN + CARD_DETAIL_RIGHT_VALUE_MIN)
 CARD_BORDER_PAD = 4               # panel border + internal padding overhead per card
 CARD_FULL_WIDTH = CARD_2COL_MIN_WIDTH + CARD_BORDER_PAD
-# Min console width to place two GPU cards side by side (else the cards stack):
-FLEET_2COL_MIN_WIDTH = 2 * CARD_FULL_WIDTH + CARD_DETAIL_GAP
 
 # Narrowest card form (single stacked-detail column) and card min height. Below the
 # derived dashboard minimum the fleet shows a "widen me" placeholder instead of
@@ -2808,20 +2807,28 @@ def render_dashboard(
         w_ok = console_width >= MIN_DASH_WIDTH
         h_ok = console_height >= MIN_DASH_HEIGHT
         bar = "bold yellow"
+        w_style = "green" if w_ok else "bold red"
+        h_style = "green" if h_ok else "bold red"
         title = "Terminal Too Small"
         w_txt = "Width Is OK" if w_ok else "Width Too Narrow"
         h_txt = "Height Is OK" if h_ok else "Height Too Short"
         inner = len(title) + 6                        # width between the side '*' borders
         placeholder = Text(justify="center", no_wrap=True)
         placeholder.append("\n" * max(0, (console_height - 6) // 2))   # rough vertical centering
-        placeholder.append(f"*** {title} ***\n", bar)
-        placeholder.append("*", bar)
-        placeholder.append(w_txt.center(inner), "green" if w_ok else "bold red")
-        placeholder.append("*\n", bar)
-        placeholder.append("*", bar)
-        placeholder.append(h_txt.center(inner), "green" if h_ok else "bold red")
-        placeholder.append("*\n", bar)
-        placeholder.append("*" * (inner + 2), bar)
+        if console_width >= inner + 2:
+            placeholder.append(f"*** {title} ***\n", bar)
+            placeholder.append("*", bar)
+            placeholder.append(w_txt.center(inner), w_style)
+            placeholder.append("*\n", bar)
+            placeholder.append("*", bar)
+            placeholder.append(h_txt.center(inner), h_style)
+            placeholder.append("*\n", bar)
+            placeholder.append("*" * (inner + 2), bar)
+        else:
+            # too narrow for the box frame — show just the centered lines, no border
+            placeholder.append(f"{title}\n", bar)
+            placeholder.append(f"{w_txt}\n", w_style)
+            placeholder.append(h_txt, h_style)
         gate = Layout()
         gate.update(placeholder)
         return gate

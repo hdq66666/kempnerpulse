@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minimum-size gate** shows an ASCII-box placeholder ("Terminal Too Small" with a
   per-dimension "Width/Height Too Narrow/Short" or "Is OK" line) instead of squeezing
   the values; the title/border are yellow and each dimension is green when OK / red
-  when short.
+  when short. Degrades to an unframed message when the terminal is narrower than the box.
 - **Vertical scrolling** of the fleet: when more card-rows exist than fit the
   height, scroll with `↑`/`↓`, `PgUp`/`PgDn`, or `j`/`k`; a `▲`/`▼` indicator with
   the visible row range shows in the panel title. Works in the main fleet and the
