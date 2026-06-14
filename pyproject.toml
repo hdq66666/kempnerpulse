@@ -38,3 +38,13 @@ kempnerpulse = "kempner_pulse:main"
 [project.urls]
 Homepage = "https://github.com/KempnerInstitute/kempnerpulse"
 Issues = "https://github.com/KempnerInstitute/kempnerpulse/issues"
+
+[tool.setuptools]
+# src layout: both the single-file entry module and the layered package live
+# under src/. The empty-string key roots all imports at src/.
+package-dir = {"" = "src"}
+py-modules = ["kempner_pulse"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["kempnerpulse*"]
