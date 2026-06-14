@@ -397,6 +397,9 @@ class GPUSelector:
         return out
 
 
+SCROLL_PAGE = 3   # card-rows moved per PgUp / PgDn
+
+
 class CommandController:
     def __init__(self, initial_focus: Optional[str]):
         self.focus_gpu: Optional[str] = initial_focus
@@ -406,15 +409,21 @@ class CommandController:
         self.buffer = ""
         self.should_exit = False
         self.last_message = ""
+        self.fleet_scroll_offset = 0
 
     def hint(self) -> str:
         if self.command_mode:
             return f":{self.buffer}"
         return "Type :focus <gpu>, :plot, :job, :q, or :exit"
 
+    def scroll_fleet(self, delta: int) -> None:
+        """Adjust the fleet scroll offset; the renderer clamps the upper bound."""
+        self.fleet_scroll_offset = max(0, self.fleet_scroll_offset + delta)
+
     def handle_input(self, available_gpu_ids: Set[str]) -> None:
         if not sys.stdin.isatty():
             return
+        chunk = ""
         while True:
             rlist, _, _ = select.select([sys.stdin], [], [], 0)
             if not rlist:
@@ -422,7 +431,33 @@ class CommandController:
             ch = sys.stdin.read(1)
             if not ch:
                 break
+            chunk += ch
+        if chunk:
+            self._process_chunk(chunk, available_gpu_ids)
+
+    def _process_chunk(self, chunk: str, available_gpu_ids: Set[str]) -> None:
+        # Parse char by char, recognizing CSI escape sequences (arrows / page keys)
+        # which arrive as ESC [ <code>. Everything else goes to _process_char.
+        i, n = 0, len(chunk)
+        while i < n:
+            ch = chunk[i]
+            if ch == "\x1b" and chunk[i + 1:i + 2] == "[":
+                code = chunk[i + 2:i + 3]
+                if not self.command_mode:
+                    paged = chunk[i + 3:i + 4] == "~"   # PgUp/PgDn require the trailing '~'
+                    if code == "A":            # up arrow
+                        self.scroll_fleet(-1)
+                    elif code == "B":          # down arrow
+                        self.scroll_fleet(1)
+                    elif code == "5" and paged:        # PgUp  (ESC[5~)
+                        self.scroll_fleet(-SCROLL_PAGE)
+                    elif code == "6" and paged:        # PgDn  (ESC[6~)
+                        self.scroll_fleet(SCROLL_PAGE)
+                # advance past the sequence (4 bytes for ESC[5~ / ESC[6~, else 3)
+                i += 4 if code in ("5", "6") and chunk[i + 3:i + 4] == "~" else 3
+                continue
             self._process_char(ch, available_gpu_ids)
+            i += 1
 
     def _process_char(self, ch: str, available_gpu_ids: Set[str]) -> None:
         if not self.command_mode:
@@ -430,6 +465,10 @@ class CommandController:
                 self.command_mode = True
                 self.buffer = ""
                 self.last_message = ""
+            elif ch in ("j", "J"):
+                self.scroll_fleet(1)
+            elif ch in ("k", "K"):
+                self.scroll_fleet(-1)
             return
 
         if ch in ("\r", "\n"):
@@ -1439,6 +1478,26 @@ def health_from_metrics(values: Dict[str, float], rates: Dict[str, float], model
     return "OK", "green"
 
 
+# Health badge labels (health_from_metrics returns one of these). The card pads the
+# badge to this fixed width so it never grows/wraps when health changes (no jitter).
+HEALTH_LABELS = ("OK", "WARN", "HOT", "CRIT")
+HEALTH_LABEL_WIDTH = max(len(h) for h in HEALTH_LABELS)
+
+
+# Canonical workload-status labels in classification order. derive_real_util returns
+# one of these strings; the UI derives its status-column width from this list so the
+# width is not a scattered magic number. (Refactor TODO: have derive_real_util
+# reference these by name so the labels live in exactly one place.)
+WORKLOAD_STATUS_LABELS = (
+    "idle", "tensor-heavy compute", "tensor compute", "FP64 / HPC compute",
+    "I/O or data-loading", "memory-bound", "compute-heavy", "compute-active",
+    "memory-active", "busy, low SM use", "low utilization", "mixed / moderate",
+)
+# Status field display width: longest label + a small margin (not a hardcoded number).
+STATUS_LABEL_MARGIN = 2
+STATUS_DISPLAY_WIDTH = max(len(s) for s in WORKLOAD_STATUS_LABELS) + STATUS_LABEL_MARGIN
+
+
 def derive_real_util(values: Dict[str, float], weights: Tuple[float, float, float, float]) -> Tuple[float, str, str]:
     """Classify GPU workload using NVIDIA DCGM profiling metric guidance.
 
@@ -1837,10 +1896,18 @@ def query_system_ram() -> Tuple[Optional[float], Optional[float]]:
 
 # ── Summary panel ────────────────────────────────────────────────────────────
 
+# Summary-bar responsive behavior (parametrized, no magic numbers): each field needs
+# ~SUMMARY_FIELD_MIN_WIDTH columns to stay readable; as the bar narrows the fields in
+# SUMMARY_DROP_ORDER are dropped one by one (every other field is always kept).
+SUMMARY_FIELD_MIN_WIDTH = 16
+SUMMARY_DROP_ORDER = ("CPU", "RAM", "FB used", "Health", "Power")
+
+
 def summary_panel(
     states: List[DerivedGPUState], source: str, poll: float, selection_desc: str,
     cpu_info: Tuple[Optional[int], Optional[int], Optional[float], Optional[int]] = (None, None, None, None),
     ram_info: Tuple[Optional[float], Optional[float]] = (None, None),
+    console_width: int = 200,
 ) -> Panel:
     n = len(states)
     avg_real = sum(s.real_util for s in states) / n if n else 0.0
@@ -1887,25 +1954,68 @@ def summary_panel(
         return f"{mib:6.0f}MiB"
     fb_text = f"{_fmt_fb(total_fb_used)} / {_fmt_fb(total_fb)} ({mem_pct:5.1f}%)"
 
+    # Fields in display order; as the bar narrows, SUMMARY_DROP_ORDER fields are
+    # removed one by one so the rest stay readable (every other field is kept).
+    fields = [
+        ("GPUs", Text(f"GPUs\n{n}", style="bold cyan", justify="center")),
+        ("Active", Text(f"Active\n{active}", style="bold green" if active else "dim", justify="center")),
+        ("Avg real util", Text(f"Avg real util\n{avg_real:.1f}%", style=usage_style(avg_real), justify="center")),
+        ("Power", Text(f"Power (tot/avg)\n{total_power:.0f}W / {avg_power:.0f}W", style=power_style(avg_power) if n else "dim", justify="center")),
+        ("FB used", Text(f"FB used\n{fb_text}", style=usage_style(mem_pct), justify="center")),
+        ("CPU", Text(f"CPU\n{cpu_text}", style=usage_style(cpu_pct) if cpu_pct is not None else "dim", justify="center")),
+        ("RAM", Text(f"RAM\n{ram_text}", style=usage_style(ram_pct), justify="center")),
+        ("Health", Text(f"Health\n{critical} warn/crit", style="bold red" if critical else "green", justify="center")),
+    ]
+    to_drop = list(SUMMARY_DROP_ORDER)
+    while len(fields) * SUMMARY_FIELD_MIN_WIDTH > max(1, console_width) and to_drop:
+        drop_name = to_drop.pop(0)
+        fields = [f for f in fields if f[0] != drop_name]
     grid = Table.grid(expand=True)
-    for _ in range(8):
+    for _ in fields:
         grid.add_column(justify="center")
-    grid.add_row(
-        Text(f"GPUs\n{n}", style="bold cyan"),
-        Text(f"Active\n{active}", style="bold green" if active else "dim"),
-        Text(f"Avg real util\n{avg_real:5.1f}%", style=usage_style(avg_real)),
-        Text(f"Power (tot/avg)\n{total_power:7.0f}W / {avg_power:5.0f}W", style=power_style(avg_power) if n else "dim"),
-        Text(f"FB used\n{fb_text}", style=usage_style(mem_pct)),
-        Text(f"CPU\n{cpu_text}", style=usage_style(cpu_pct) if cpu_pct is not None else "dim"),
-        Text(f"RAM\n{ram_text}", style=usage_style(ram_pct)),
-        Text(f"Health\n{critical} warn/crit", style="bold red" if critical else "green"),
-    )
+    grid.add_row(*(cell for _, cell in fields))
     return Panel(grid, title=f"{APP_NAME} (v{__version__})", border_style="cyan", box=box.ROUNDED)
 
 
 # ── Fleet View (GPU cards) ───────────────────────────────────────────────────
 
-def gpu_card(state: DerivedGPUState, history: HistoryStore, power_limit: Optional[float] = None, nvlink_limit: Optional[float] = None) -> Panel:
+# Fleet-card bar-block layout (parametrized so the widths aren't scattered literals).
+FLEET_BAR_WIDTH = 12        # filled/empty cells in each real/mem/pwr bar
+FLEET_BAR_LABEL_WIDTH = 4   # width of the "real"/"mem "/"pwr " label column
+FLEET_BAR_GAP = 2           # spacer between the three bar groups
+
+# Fleet-view responsive layout breakpoints (console columns); named so they are
+# tunable and never appear as scattered magic numbers in the render path.
+CARD_DETAIL_LABEL_MIN = 11        # detail label column min width (left & right grids)
+CARD_DETAIL_LEFT_VALUE_MIN = 18   # left detail value column min width
+CARD_DETAIL_RIGHT_VALUE_MIN = 22  # right detail value column min width
+CARD_DETAIL_GAP = 2               # horizontal padding between the two detail columns
+# Min content width to show a card's two detail columns side by side:
+CARD_2COL_MIN_WIDTH = (CARD_DETAIL_LABEL_MIN + CARD_DETAIL_LEFT_VALUE_MIN + CARD_DETAIL_GAP
+                       + CARD_DETAIL_LABEL_MIN + CARD_DETAIL_RIGHT_VALUE_MIN)
+CARD_BORDER_PAD = 4               # panel border + internal padding overhead per card
+CARD_FULL_WIDTH = CARD_2COL_MIN_WIDTH + CARD_BORDER_PAD
+
+# Narrowest card form (single stacked-detail column) and card min height. Below the
+# derived dashboard minimum the fleet shows a "widen me" placeholder instead of
+# squeezed values. (All named constants — tunable, no magic numbers.)
+W_MIN_1COL = CARD_DETAIL_LABEL_MIN + CARD_DETAIL_RIGHT_VALUE_MIN + CARD_BORDER_PAD
+CARD_MIN_HEIGHT = 13                       # title + ~9 detail rows + 3 bars (2-col card)
+CARD_1COL_HEIGHT = 24                      # stacked card: title + 18 detail rows + 3 vertical bars + border
+# Dashboard layout chrome (rows) — named so the fleet-area height math is exact.
+SUMMARY_PANEL_ROWS = 5
+FOOTER_PANEL_ROWS = 3
+FLEET_PANEL_BORDER = 2
+MIN_DASH_WIDTH = W_MIN_1COL + 4            # one narrow card + panel slack
+MIN_DASH_HEIGHT = CARD_MIN_HEIGHT + SUMMARY_PANEL_ROWS + FOOTER_PANEL_ROWS + FLEET_PANEL_BORDER
+# choose_grid() tuning for the proportional fleet layout.
+A_CARD = CARD_FULL_WIDTH / CARD_MIN_HEIGHT  # ~5.23: a full card is ~5x wider than tall
+RAGGED_WEIGHT = 0.05                         # score penalty per empty trailing grid cell
+UTIL_WEIGHT = 0.15                           # bounded reward for using the columns the window affords
+MAX_GPUS = 8
+
+
+def gpu_card(state: DerivedGPUState, history: HistoryStore, power_limit: Optional[float] = None, nvlink_limit: Optional[float] = None, detail_columns: int = 2) -> Panel:
     gpu = state.gpu_id
     name = state.identity.get("modelName", "GPU")
     device = state.identity.get("device", f"gpu{gpu}")
@@ -1917,83 +2027,114 @@ def gpu_card(state: DerivedGPUState, history: HistoryStore, power_limit: Optiona
     tensor = to_percent("DCGM_FI_PROF_PIPE_TENSOR_ACTIVE", state.values.get("DCGM_FI_PROF_PIPE_TENSOR_ACTIVE"))
     dram = to_percent("DCGM_FI_PROF_DRAM_ACTIVE", state.values.get("DCGM_FI_PROF_DRAM_ACTIVE"))
 
-    table = Table.grid(expand=True)
-    table.add_column(ratio=1)
-    table.add_column(ratio=1)
-
-    left = Table.grid(padding=(0, 1))
-    left.add_column(justify="left", min_width=11, no_wrap=True)
-    left.add_column(justify="right", min_width=18, no_wrap=True)
-    left.add_row("Real util", Text(fmt_pct(state.real_util), style=usage_style(state.real_util)))
-    left.add_row("GPU util", Text(fmt_pct(gpu_util), style=usage_style(gpu_util)))
-    left.add_row("GR active", Text(fmt_pct(gr_active), style=usage_style(gr_active)))
+    # Detail rows as (label, value) data so the same rows render either as two
+    # side-by-side grids (wide) or stacked into ONE grid (narrow). Stacking into a
+    # single grid keeps every value in the same column so left and right values stay
+    # vertically aligned.
     sm_combo_style = usage_style(sm_active)
-    left.add_row("SM actv/occ", Text(f"{fmt_pct(sm_active)} / {fmt_pct(sm_occ)}", style=sm_combo_style))
-    left.add_row("Tensor", Text(fmt_pct(tensor), style=usage_style(tensor)))
-    left.add_row("DRAM", Text(fmt_pct(dram), style=usage_style(dram)))
-    left.add_row("Memory", Text(
-        f"{fmt_mib(state.values.get('DCGM_FI_DEV_FB_USED'))} / {fmt_mib(state.memory_total_mib)} ({fmt_pct(state.memory_used_pct)})",
-        style=usage_style(state.memory_used_pct),
-    ))
     _power_w = state.values.get("DCGM_FI_DEV_POWER_USAGE")
-    _power_max = power_limit
-    _power_text = f"{fmt_watts(_power_w)} / {fmt_watts(_power_max)}" if _power_max else fmt_watts(_power_w)
-    left.add_row("Power", Text(_power_text, style=power_style(_power_w)))
+    _power_text = (f"{fmt_watts(_power_w)} / {fmt_watts(power_limit)}"
+                   if power_limit else fmt_watts(_power_w))
     _gpu_t = state.values.get('DCGM_FI_DEV_GPU_TEMP')
     _mem_t = state.values.get('DCGM_FI_DEV_MEMORY_TEMP')
     _max_t = max(t for t in (_gpu_t, _mem_t) if t is not None) if (_gpu_t is not None or _mem_t is not None) else None
-    left.add_row("Temps", Text(
-        f"GPU {fmt_temp(_gpu_t)} | MEM {fmt_temp(_mem_t)}",
-        style=temp_style(_max_t, state.identity.get("modelName")),
-    ))
-
-    right = Table.grid(padding=(0, 1))
-    right.add_column(justify="left", min_width=11, no_wrap=True)
-    right.add_column(justify="right", min_width=22, no_wrap=True)
     memcpy_pct = to_percent("DCGM_FI_DEV_MEM_COPY_UTIL", state.values.get("DCGM_FI_DEV_MEM_COPY_UTIL"))
     nvlink_gbps = nvlink_to_gbps(state.values.get(NVLINK_TOTAL_METRIC))
-    right.add_row("Memcpy", Text(fmt_pct(memcpy_pct), style=usage_style(memcpy_pct)))
-    right.add_row("PCIe RX", Text(fmt_bytes_per_s(state.values.get("DCGM_FI_PROF_PCIE_RX_BYTES")), style="cyan"))
-    right.add_row("PCIe TX", Text(fmt_bytes_per_s(state.values.get("DCGM_FI_PROF_PCIE_TX_BYTES")), style="cyan"))
     nvlink_text = "N/A" if nvlink_limit is None and nvlink_gbps is None else fmt_gbps(nvlink_gbps)
-    right.add_row("NVLink Δ", Text(nvlink_text, style=nvlink_util_style(nvlink_gbps, nvlink_limit)))
-    right.add_row("PCIe replay", Text(fmt_num(state.rates.get("DCGM_FI_DEV_PCIE_REPLAY_COUNTER"), 2) + "/s", style="yellow" if (state.rates.get("DCGM_FI_DEV_PCIE_REPLAY_COUNTER") or 0) > 0 else "dim"))
-    right.add_row("SM clock", Text(fmt_mhz(state.values.get("DCGM_FI_DEV_SM_CLOCK")), style="green"))
-    right.add_row("MEM clock", Text(fmt_mhz(state.values.get("DCGM_FI_DEV_MEM_CLOCK")), style="green"))
-    right.add_row("Energy", Text(fmt_joules(state.energy_j), style="magenta"))
-    right.add_row("Status", Text(f"{state.status_line:<22}", style=state.health_style))
+    _replay = state.rates.get("DCGM_FI_DEV_PCIE_REPLAY_COUNTER")
 
-    table.add_row(left, right)
+    left_rows = [
+        ("Real util", Text(fmt_pct(state.real_util), style=usage_style(state.real_util))),
+        ("GPU util", Text(fmt_pct(gpu_util), style=usage_style(gpu_util))),
+        ("GR active", Text(fmt_pct(gr_active), style=usage_style(gr_active))),
+        ("SM actv/occ", Text(f"{fmt_pct(sm_active)} / {fmt_pct(sm_occ)}", style=sm_combo_style)),
+        ("Tensor", Text(fmt_pct(tensor), style=usage_style(tensor))),
+        ("DRAM", Text(fmt_pct(dram), style=usage_style(dram))),
+        ("Memory", Text(
+            f"{fmt_mib(state.values.get('DCGM_FI_DEV_FB_USED'))} / {fmt_mib(state.memory_total_mib)} ({fmt_pct(state.memory_used_pct)})",
+            style=usage_style(state.memory_used_pct))),
+        ("Power", Text(_power_text, style=power_style(_power_w))),
+        ("Temps", Text(f"GPU {fmt_temp(_gpu_t)} | MEM {fmt_temp(_mem_t)}",
+                       style=temp_style(_max_t, state.identity.get("modelName")))),
+    ]
+    right_rows = [
+        ("Memcpy", Text(fmt_pct(memcpy_pct), style=usage_style(memcpy_pct))),
+        ("PCIe RX", Text(fmt_bytes_per_s(state.values.get("DCGM_FI_PROF_PCIE_RX_BYTES")), style="cyan")),
+        ("PCIe TX", Text(fmt_bytes_per_s(state.values.get("DCGM_FI_PROF_PCIE_TX_BYTES")), style="cyan")),
+        ("NVLink Δ", Text(nvlink_text, style=nvlink_util_style(nvlink_gbps, nvlink_limit))),
+        ("PCIe replay", Text(fmt_num(_replay, 2) + "/s", style="yellow" if (_replay or 0) > 0 else "dim")),
+        ("SM clock", Text(fmt_mhz(state.values.get("DCGM_FI_DEV_SM_CLOCK")), style="green")),
+        ("MEM clock", Text(fmt_mhz(state.values.get("DCGM_FI_DEV_MEM_CLOCK")), style="green")),
+        ("Energy", Text(fmt_joules(state.energy_j), style="magenta")),
+        ("Status", Text(f"{state.status_line:<{STATUS_DISPLAY_WIDTH}}", style=state.health_style)),
+    ]
 
-    bars = Table.grid(expand=True)
-    bars.add_column(width=4, no_wrap=True)
-    bars.add_column(ratio=1, no_wrap=True)
-    bars.add_column(width=1)
-    bars.add_column(width=4, no_wrap=True)
-    bars.add_column(ratio=1, no_wrap=True)
-    bars.add_column(width=1)
-    bars.add_column(width=4, no_wrap=True)
-    bars.add_column(ratio=1, no_wrap=True)
+    def _detail_grid(rows, value_min):
+        g = Table.grid(padding=(0, 1))
+        g.add_column(justify="left", min_width=CARD_DETAIL_LABEL_MIN, no_wrap=True)
+        g.add_column(justify="right", min_width=value_min, no_wrap=True)
+        for _lbl, _val in rows:
+            g.add_row(_lbl, _val)
+        return g
+
+    # Two detail columns side by side when there's room, else the right column
+    # stacks under the left as ONE grid (so the values stay aligned).
+    if detail_columns >= 2:
+        table = Table.grid(expand=True, padding=(0, CARD_DETAIL_GAP))
+        table.add_column(ratio=1)
+        table.add_column(ratio=1)
+        table.add_row(_detail_grid(left_rows, CARD_DETAIL_LEFT_VALUE_MIN),
+                      _detail_grid(right_rows, CARD_DETAIL_RIGHT_VALUE_MIN))
+        detail_block = table
+    else:
+        detail_block = _detail_grid(left_rows + right_rows, CARD_DETAIL_RIGHT_VALUE_MIN)
+
+    # Bars (real / mem / pwr). Side by side when the card shows two detail columns;
+    # stacked vertically (under each other) when the details stack, so the bars match
+    # the rest of the card's layout. Fixed-width so they never strand mid-column.
     power_w = state.values.get("DCGM_FI_DEV_POWER_USAGE") or 0.0
     power_cap = power_limit if power_limit and power_limit > 0 else 700.0
     power_pct = min(100.0, power_w / power_cap * 100.0)
-    bw = 12  # bar width for fleet cards
-    bars.add_row(
-        Text("real", style="dim"), make_bar(state.real_util, width=bw),
-        Text(""),
-        Text("mem ", style="dim"), make_bar(state.memory_used_pct, width=bw),
-        Text(""),
-        Text("pwr ", style="dim"), make_bar(power_pct, width=bw, style_override=power_style(power_w)),
-    )
+    bw = FLEET_BAR_WIDTH  # bar width for fleet cards
+    bars = Table.grid(expand=False)
+    if detail_columns >= 2:
+        bars.add_column(width=FLEET_BAR_LABEL_WIDTH, no_wrap=True)
+        bars.add_column(width=FLEET_BAR_WIDTH, no_wrap=True)
+        bars.add_column(width=FLEET_BAR_GAP)
+        bars.add_column(width=FLEET_BAR_LABEL_WIDTH, no_wrap=True)
+        bars.add_column(width=FLEET_BAR_WIDTH, no_wrap=True)
+        bars.add_column(width=FLEET_BAR_GAP)
+        bars.add_column(width=FLEET_BAR_LABEL_WIDTH, no_wrap=True)
+        bars.add_column(width=FLEET_BAR_WIDTH, no_wrap=True)
+        bars.add_row(
+            Text("real", style="dim"), make_bar(state.real_util, width=bw),
+            Text(""),
+            Text("mem ", style="dim"), make_bar(state.memory_used_pct, width=bw),
+            Text(""),
+            Text("pwr ", style="dim"), make_bar(power_pct, width=bw, style_override=power_style(power_w)),
+        )
+    else:
+        bars.add_column(width=FLEET_BAR_LABEL_WIDTH, no_wrap=True)
+        bars.add_column(width=FLEET_BAR_WIDTH, no_wrap=True)
+        bars.add_row(Text("real", style="dim"), make_bar(state.real_util, width=bw))
+        bars.add_row(Text("mem ", style="dim"), make_bar(state.memory_used_pct, width=bw))
+        bars.add_row(Text("pwr ", style="dim"), make_bar(power_pct, width=bw, style_override=power_style(power_w)))
 
+    # Header: "GPU <id>  <model>  [health]". Drop the device token when it is just the
+    # redundant default "gpu<id>"; keep it only when it carries extra info (e.g. MIG).
+    header_parts = [(f"GPU {gpu}  ", "bold")]
+    if device and device != f"gpu{gpu}":
+        header_parts.append((f"{device}  ", "cyan"))
+    header_parts.append((f"{name}  ", "dim"))
+    header_parts.append((f"[{state.health:^{HEALTH_LABEL_WIDTH}}]", state.health_style))
+    # No-wrap header so a longer health badge (or model name) never wraps to a second
+    # line and jitters the card; it truncates with an ellipsis instead.
+    header = Text.assemble(*header_parts)
+    header.no_wrap = True
+    header.overflow = "ellipsis"
     body = Group(
-        Text.assemble(
-            (f"GPU {gpu}  ", "bold"),
-            (device, "cyan"),
-            (f"  {name}  ", "dim"),
-            (f"[{state.health}]", state.health_style),
-        ),
-        table,
+        header,
+        detail_block,
         bars,
     )
     border = "red" if state.health == "CRIT" else "yellow" if state.health != "OK" else "blue"
@@ -2257,9 +2398,37 @@ def line_plot_view_panel(
 
 # ── Focus View ───────────────────────────────────────────────────────────────
 
-def selected_gpu_panel(state: DerivedGPUState, history: HistoryStore, power_limit: Optional[float] = None, nvlink_limit: Optional[float] = None) -> Panel:
+# Focused-view info fields reflow into as many fixed-width columns as the panel
+# affords (FOCUS_INFO_MAX_COLS -> 1) so they never jam; width fits "Status: <label>".
+# The fixed column width also keeps the panel from jiggling as values change.
+FOCUS_INFO_FIELD_W = len("Status: ") + STATUS_DISPLAY_WIDTH
+FOCUS_INFO_MAX_COLS = 4
+# Focused metric-table "Now" column: fixed width so it (and the Bar column after it)
+# don't jump when a value's width changes — e.g. NVLink rate "N/A" -> "900.00 GB/s".
+# Only "Now" is pinned; Bar/Trend stay flexible so the Metric column keeps room for
+# its section headers in the narrow focus pane.
+FOCUS_METRIC_NOW_W = 12
+# Focus layout: mini-fleet : focused-panel column split, and the minimum total width
+# to keep that split — below it, drop the fleet overview and show only the panel.
+FOCUS_SPLIT_LEFT_RATIO = 3
+FOCUS_SPLIT_RIGHT_RATIO = 4
+FOCUS_PANEL_MIN_WIDTH = 80
+FOCUS_SPLIT_MIN_WIDTH = FOCUS_PANEL_MIN_WIDTH * (FOCUS_SPLIT_LEFT_RATIO + FOCUS_SPLIT_RIGHT_RATIO) // FOCUS_SPLIT_RIGHT_RATIO
+
+
+def selected_gpu_panel(state: DerivedGPUState, history: HistoryStore, power_limit: Optional[float] = None, nvlink_limit: Optional[float] = None, console_width: int = 200) -> Panel:
     gpu = state.gpu_id
-    title = f"Focused GPU {gpu}   {state.identity.get('device', '')}   {state.identity.get('pci_bus_id', '')}"
+    # Build the title from non-empty parts so empty device/bus-id don't leave trailing
+    # spaces (which would push the centered title off to the left). Drop the redundant
+    # "gpu<id>" device token (it duplicates "GPU <id>").
+    _title_parts = [f"Focused GPU {gpu}"]
+    _dev = state.identity.get("device", "")
+    _bus = state.identity.get("pci_bus_id", "")
+    if _dev and _dev != f"gpu{gpu}":
+        _title_parts.append(_dev)
+    if _bus:
+        _title_parts.append(_bus)
+    title = "   ".join(_title_parts)
 
     nvlink_gbps = nvlink_to_gbps(state.values.get(NVLINK_TOTAL_METRIC))
     nvlink_max = nvlink_limit or 400.0
@@ -2311,7 +2480,7 @@ def selected_gpu_panel(state: DerivedGPUState, history: HistoryStore, power_limi
 
     table = Table(box=box.SIMPLE_HEAVY, expand=True)
     table.add_column("Metric", style="bold")
-    table.add_column("Now", justify="right")
+    table.add_column("Now", justify="right", width=FOCUS_METRIC_NOW_W, no_wrap=True)
     table.add_column("Bar", justify="left")
     table.add_column("Trend", justify="left")
 
@@ -2349,27 +2518,30 @@ def selected_gpu_panel(state: DerivedGPUState, history: HistoryStore, power_limi
             trend = Text(sparkline(history.get(gpu, hist_key or "real_util"), 28, vmax), style=usage_style(value))
         table.add_row(label, now, bar, trend)
 
-    info = Table.grid(expand=True)
-    for _ in range(4):
-        info.add_column()
-    info.add_row(
+    # Info fields reflow into as many fixed-width columns as the panel affords
+    # (FOCUS_INFO_MAX_COLS -> 1), stacking columnwise when narrow so they never jam.
+    _replay = state.rates.get('DCGM_FI_DEV_PCIE_REPLAY_COUNTER')
+    info_fields = [
         Text(f"Status: {state.status_line}", style=state.health_style),
         Text(f"PCIe RX: {fmt_bytes_per_s(state.values.get('DCGM_FI_PROF_PCIE_RX_BYTES'))}", style="cyan"),
         Text(f"PCIe TX: {fmt_bytes_per_s(state.values.get('DCGM_FI_PROF_PCIE_TX_BYTES'))}", style="cyan"),
         Text(f"NVLink Δ: {'N/A' if nvlink_max is None and nvlink_gbps is None else fmt_gbps(nvlink_gbps)}", style=nvlink_util_style(nvlink_gbps, nvlink_max)),
-    )
-    info.add_row(
         Text(f"Energy: {fmt_joules(state.energy_j)}", style="magenta"),
         Text(f"Power: {fmt_watts(state.values.get('DCGM_FI_DEV_POWER_USAGE'))}", style=power_style(state.values.get('DCGM_FI_DEV_POWER_USAGE'))),
         Text(f"SM clk: {fmt_mhz(state.values.get('DCGM_FI_DEV_SM_CLOCK'))}", style="green"),
         Text(f"MEM clk: {fmt_mhz(state.values.get('DCGM_FI_DEV_MEM_CLOCK'))}", style="green"),
-    )
-    info.add_row(
-        Text(f"Replay rate: {fmt_num(state.rates.get('DCGM_FI_DEV_PCIE_REPLAY_COUNTER'), 2)}/s", style="yellow" if (state.rates.get('DCGM_FI_DEV_PCIE_REPLAY_COUNTER') or 0) > 0 else "dim"),
-        Text("", style="dim"), Text("", style="dim"), Text("", style="dim"),
-    )
+        Text(f"Replay rate: {fmt_num(_replay, 2)}/s", style="yellow" if (_replay or 0) > 0 else "dim"),
+    ]
+    info_cols = max(1, min(FOCUS_INFO_MAX_COLS, console_width // FOCUS_INFO_FIELD_W))
+    info = Table.grid(expand=True)
+    for _ in range(info_cols):
+        info.add_column(width=FOCUS_INFO_FIELD_W, no_wrap=True)
+    for i in range(0, len(info_fields), info_cols):
+        chunk = info_fields[i:i + info_cols]
+        chunk += [Text("")] * (info_cols - len(chunk))
+        info.add_row(*chunk)
 
-    return Panel(Group(info, table), title=title, border_style="cyan", box=box.ROUNDED)
+    return Panel(Group(info, table), title=title, title_align="center", border_style="cyan", box=box.ROUNDED)
 
 
 # ── Job View ─────────────────────────────────────────────────────────────────
@@ -2439,18 +2611,91 @@ def jobs_view_panel(states: List[DerivedGPUState], gpu_processes: Dict[str, List
 
 # ── Fleet panel, footer & dashboard assembly ─────────────────────────────────
 
-def fleet_panel(states: List[DerivedGPUState], history: HistoryStore, columns: int = 2, power_limits: Optional[Dict[str, float]] = None, nvlink_bw_limits: Optional[Dict[str, float]] = None) -> Panel:
+def candidate_cols(n: int) -> List[int]:
+    """Sensible column counts to try for n cards: full row (n), full column (1),
+    exact divisors, and balanced ragged grids. Pruned so every row but the last is
+    full ((rows-1)*cols < n)."""
+    cols = {1, n}
+    for c in range(1, n + 1):
+        if n % c == 0:
+            cols.add(c)
+    for r in range(1, n + 1):
+        cols.add(-(-n // r))                  # ceil(n / r) -> balanced ragged grids
+    out = []
+    for c in sorted(cols):
+        rows = -(-n // c)
+        if (rows - 1) * c < n:
+            out.append(c)
+    return out
+
+
+def choose_grid(n: int, W: int, H: int, w_min: Optional[int] = None) -> Tuple[int, int]:
+    """Choose (cols, rows) for n GPU cards in a W x H fleet area, matching the grid's
+    aspect ratio to the window's (wide -> more columns, tall -> more rows). Never uses
+    more columns than fit at the card minimum width; vertical overflow is left to
+    scrolling. Deterministic. Returns (cols, rows)."""
+    n = max(1, min(MAX_GPUS, n))
+    if n == 1:
+        return (1, 1)
+    w_min = W_MIN_1COL if w_min is None else w_min
+    fit_cols = max(1, W // w_min)
+    feasible = [c for c in candidate_cols(n) if c <= fit_cols] or [1]
+    a_win = max(0.01, W / max(1, H))
+
+    def score(c: int):
+        rows = -(-n // c)
+        a_grid = (c / rows) * A_CARD                          # corrected for card box shape
+        mismatch = abs(math.log(a_grid) - math.log(a_win))    # scale-symmetric aspect match
+        ragged = RAGGED_WEIGHT * (c * rows - n)               # penalize empty trailing cells
+        util = UTIL_WEIGHT * min(c, fit_cols) / max(1, fit_cols)  # reward using affordable cols
+        return (mismatch + ragged - util, rows, -c, c)        # tie-breaks: fewer rows, more cols
+
+    cols = min(feasible, key=score)
+    return (cols, -(-n // cols))
+
+
+def fleet_panel(states: List[DerivedGPUState], history: HistoryStore, cards_per_row: int = 2, detail_columns: int = 2, power_limits: Optional[Dict[str, float]] = None, nvlink_bw_limits: Optional[Dict[str, float]] = None, avail_height: Optional[int] = None, controller: Optional["CommandController"] = None) -> Panel:
+    cards_per_row = max(1, cards_per_row)
     rows: List[List[Panel]] = []
-    for idx in range(0, len(states), columns):
-        rows.append([gpu_card(s, history, (power_limits or {}).get(s.gpu_id), (nvlink_bw_limits or {}).get(s.gpu_id)) for s in states[idx: idx + columns]])
+    for idx in range(0, len(states), cards_per_row):
+        rows.append([gpu_card(s, history, (power_limits or {}).get(s.gpu_id), (nvlink_bw_limits or {}).get(s.gpu_id), detail_columns=detail_columns) for s in states[idx: idx + cards_per_row]])
+
+    # Vertical scroll: show the window of card-rows that fits the height, from the
+    # controller's offset (clamped here, since only we know how many rows fit).
+    total_rows = len(rows)
+    card_h = CARD_MIN_HEIGHT if detail_columns >= 2 else CARD_1COL_HEIGHT
+    visible = total_rows if avail_height is None else max(1, avail_height // card_h)
+    offset = controller.fleet_scroll_offset if controller is not None else 0
+    offset = max(0, min(offset, max(0, total_rows - visible)))
+    if controller is not None:
+        controller.fleet_scroll_offset = offset       # write back the clamped value
+    shown = rows[offset: offset + visible]
 
     grid = Table.grid(expand=True)
-    for _ in range(columns):
+    for _ in range(cards_per_row):
         grid.add_column(ratio=1)
-    for row in rows:
-        padded = row + [Text("")] * (columns - len(row))
+    for row in shown:
+        padded = row + [Text("")] * (cards_per_row - len(row))
         grid.add_row(*padded)
-    return Panel(grid, title="Fleet overview", border_style="blue", box=box.ROUNDED)
+
+    title = "Fleet overview"
+    if total_rows > visible:
+        up = "▲" if offset > 0 else " "
+        down = "▼" if offset + visible < total_rows else " "
+        title = f"Fleet overview  {up}{down} {offset + 1}-{min(offset + visible, total_rows)}/{total_rows}"
+    return Panel(grid, title=title, border_style="blue", box=box.ROUNDED)
+
+
+def build_fleet_panel(states: List[DerivedGPUState], history: HistoryStore, avail_width: int, avail_height: int, power_limits: Optional[Dict[str, float]] = None, nvlink_bw_limits: Optional[Dict[str, float]] = None, controller: Optional["CommandController"] = None) -> Panel:
+    """Lay out the fleet for an available width x height area using the proportional
+    grid. Shared by the main fleet view AND the focused-mode mini-fleet so both behave
+    identically (modular): cards-per-row follows the area's proportion, never hardcoded.
+    Vertical scrolling (via the controller) is handled in fleet_panel."""
+    cols, _rows = choose_grid(len(states), avail_width, avail_height)
+    detail_columns = 2 if avail_width // max(1, cols) >= CARD_FULL_WIDTH else 1
+    return fleet_panel(states, history, cards_per_row=cols, detail_columns=detail_columns,
+                       power_limits=power_limits, nvlink_bw_limits=nvlink_bw_limits,
+                       avail_height=avail_height, controller=controller)
 
 
 WEIGHT_PRESETS = {
@@ -2465,23 +2710,69 @@ def workflow_label(weights: Tuple[float, float, float, float]) -> str:
     return WEIGHT_PRESETS.get(rounded, "Custom Workflow")
 
 
-def footer_panel(selection_desc: str, controller: CommandController, source: str = "", poll: float = 1.0, weights: Tuple[float, float, float, float] = (0.35, 0.35, 0.20, 0.10)) -> Panel:
+# Footer right-side status fields are dropped one by one as the footer narrows
+# (order: host, src, poll, date) so the left side (Visible / workflow / Commands)
+# stays readable. Named constants — no magic numbers.
+FOOTER_LEFT_MIN_WIDTH = 30   # columns reserved for the left status before dropping right fields
+FOOTER_CHROME_WIDTH = 4      # panel border (2) + spacer column (2)
+
+
+def footer_panel(selection_desc: str, controller: CommandController, source: str = "", poll: float = 1.0, weights: Tuple[float, float, float, float] = (0.35, 0.35, 0.20, 0.10), console_width: int = 200) -> Panel:
     selection_text = selection_desc
     msg = controller.last_message or controller.hint()
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")  # fixed 19 chars
     hostname = socket.gethostname().split('.')[0]
     display_source = re.sub(r'^https?://', '', source)
     wf_label = workflow_label(weights)
-    left = Text.assemble(
-        ("Visible ", "bold cyan"), (selection_text, "dim"),
-        ("   ", ""), (wf_label, "bold magenta"),
-        ("   Commands ", "bold"), (msg, "green" if controller.command_mode else "dim"),
-    )
-    left.no_wrap = True
-    left.overflow = "ellipsis"
-    right_plain = f"host={hostname}  src={display_source}  poll={fmt_duration(poll)}  {now_str}"
+    # Right-side fields: drop host -> src -> poll -> date as the footer narrows,
+    # reserving FOOTER_LEFT_MIN_WIDTH for the left status.
+    right_parts = [
+        f"host={hostname}",
+        f"src={display_source}",
+        f"poll={fmt_duration(poll)}",
+        now_str,
+    ]
+    right_budget = max(0, console_width - FOOTER_LEFT_MIN_WIDTH - FOOTER_CHROME_WIDTH)
+    while right_parts and len("  ".join(right_parts)) > right_budget:
+        right_parts.pop(0)            # drop host first, then src, then poll, then date
+    right_plain = "  ".join(right_parts)
     right = Text(right_plain, style="dim", no_wrap=True)
     right_w = len(right_plain)
+
+    # Left-side fields in priority order: Commands (kept longest), then Visible, then
+    # the workflow label. As the footer narrows, drop the workflow first, then Visible,
+    # always keeping Commands; fit into the width left after the right side.
+    left_keys = ["cmd", "visible", "wf"]
+
+    def _left_plain(keys: list) -> str:
+        parts = []
+        if "cmd" in keys:
+            parts.append(f"Commands {msg}")
+        if "visible" in keys:
+            parts.append(f"Visible {selection_text}")
+        if "wf" in keys:
+            parts.append(wf_label)
+        return "   ".join(parts)
+
+    left_budget = max(0, console_width - FOOTER_CHROME_WIDTH - right_w)
+    for _d in ("wf", "visible"):          # drop workflow, then Visible; always keep Commands
+        if len(_left_plain(left_keys)) <= left_budget:
+            break
+        left_keys = [k for k in left_keys if k != _d]
+    segs = []
+    if "cmd" in left_keys:
+        segs += [("Commands ", "bold"), (msg, "green" if controller.command_mode else "dim")]
+    if "visible" in left_keys:
+        if segs:
+            segs.append(("   ", ""))
+        segs += [("Visible ", "bold cyan"), (selection_text, "dim")]
+    if "wf" in left_keys:
+        if segs:
+            segs.append(("   ", ""))
+        segs.append((wf_label, "bold magenta"))
+    left = Text.assemble(*segs) if segs else Text("")
+    left.no_wrap = True
+    left.overflow = "ellipsis"
     line = Table.grid(expand=True)
     line.add_column(ratio=1, no_wrap=True)
     line.add_column(width=2)
@@ -2502,19 +2793,54 @@ def render_dashboard(
     pcie_info: str = "",
     nvlink_bw_limits: Optional[Dict[str, float]] = None,
     console_height: int = 50,
+    console_width: int = 200,
     weights: Tuple[float, float, float, float] = (0.35, 0.35, 0.20, 0.10),
     gpu_processes: Optional[Dict[str, List[GpuProcess]]] = None,
     cpu_info: Tuple[Optional[int], Optional[int], Optional[float], Optional[int]] = (None, None, None, None),
     ram_info: Tuple[Optional[float], Optional[float]] = (None, None),
 ) -> Layout:
+    # Hard minimum: below this the cards would have to be squeezed, so show a
+    # "widen me" placeholder instead of distorting the values (never render below
+    # the per-card minimum size).
+    if console_width < MIN_DASH_WIDTH or console_height < MIN_DASH_HEIGHT:
+        # ASCII box: borders/title in yellow, each dimension green when OK else red.
+        w_ok = console_width >= MIN_DASH_WIDTH
+        h_ok = console_height >= MIN_DASH_HEIGHT
+        bar = "bold yellow"
+        w_style = "green" if w_ok else "bold red"
+        h_style = "green" if h_ok else "bold red"
+        title = "Terminal Too Small"
+        w_txt = "Width Is OK" if w_ok else "Width Too Narrow"
+        h_txt = "Height Is OK" if h_ok else "Height Too Short"
+        inner = len(title) + 6                        # width between the side '*' borders
+        placeholder = Text(justify="center", no_wrap=True)
+        placeholder.append("\n" * max(0, (console_height - 6) // 2))   # rough vertical centering
+        if console_width >= inner + 2:
+            placeholder.append(f"*** {title} ***\n", bar)
+            placeholder.append("*", bar)
+            placeholder.append(w_txt.center(inner), w_style)
+            placeholder.append("*\n", bar)
+            placeholder.append("*", bar)
+            placeholder.append(h_txt.center(inner), h_style)
+            placeholder.append("*\n", bar)
+            placeholder.append("*" * (inner + 2), bar)
+        else:
+            # too narrow for the box frame — show just the centered lines, no border
+            placeholder.append(f"{title}\n", bar)
+            placeholder.append(f"{w_txt}\n", w_style)
+            placeholder.append(h_txt, h_style)
+        gate = Layout()
+        gate.update(placeholder)
+        return gate
+
     layout = Layout()
     layout.split_column(
-        Layout(name="summary", size=5),
+        Layout(name="summary", size=SUMMARY_PANEL_ROWS),
         Layout(name="middle", ratio=1),
-        Layout(name="footer", size=3),
+        Layout(name="footer", size=FOOTER_PANEL_ROWS),
     )
-    layout["summary"].update(summary_panel(states, source, poll, selection_desc, cpu_info=cpu_info, ram_info=ram_info))
-    layout["footer"].update(footer_panel(selection_desc, controller, source, poll, weights))
+    layout["summary"].update(summary_panel(states, source, poll, selection_desc, cpu_info=cpu_info, ram_info=ram_info, console_width=console_width))
+    layout["footer"].update(footer_panel(selection_desc, controller, source, poll, weights, console_width=console_width))
 
     if not states:
         layout["middle"].update(Panel(
@@ -2530,16 +2856,29 @@ def render_dashboard(
         layout["middle"].update(jobs_view_panel(states, gpu_processes or {}))
     elif controller.focus_gpu is not None:
         selected = next((s for s in states if s.gpu_id == controller.focus_gpu), states[0])
-        layout["middle"].split_row(
-            Layout(name="left", ratio=3),
-            Layout(name="right", ratio=4),
-        )
-        layout["middle"]["left"].update(fleet_panel(states, history, columns=1 if len(states) <= 2 else 2, power_limits=power_limits, nvlink_bw_limits=nvlink_bw_limits))
         gpu_power_limit = (power_limits or {}).get(selected.gpu_id)
         gpu_nvlink_limit = (nvlink_bw_limits or {}).get(selected.gpu_id)
-        layout["middle"]["right"].update(selected_gpu_panel(selected, history, gpu_power_limit, gpu_nvlink_limit))
+        if console_width >= FOCUS_SPLIT_MIN_WIDTH:
+            # Wide enough for both: mini-fleet on the left, focused panel on the right.
+            layout["middle"].split_row(
+                Layout(name="left", ratio=FOCUS_SPLIT_LEFT_RATIO),
+                Layout(name="right", ratio=FOCUS_SPLIT_RIGHT_RATIO),
+            )
+            fleet_h = console_height - SUMMARY_PANEL_ROWS - FOOTER_PANEL_ROWS - FLEET_PANEL_BORDER
+            total_ratio = FOCUS_SPLIT_LEFT_RATIO + FOCUS_SPLIT_RIGHT_RATIO
+            left_w = console_width * FOCUS_SPLIT_LEFT_RATIO // total_ratio
+            panel_w = console_width * FOCUS_SPLIT_RIGHT_RATIO // total_ratio
+            # Same fleet code as the main view -> the mini-fleet packs 2+ per row when
+            # its pane is wide enough, instead of always stacking one per row.
+            layout["middle"]["left"].update(build_fleet_panel(states, history, left_w, fleet_h, power_limits, nvlink_bw_limits, controller=controller))
+            layout["middle"]["right"].update(selected_gpu_panel(selected, history, gpu_power_limit, gpu_nvlink_limit, console_width=panel_w))
+        else:
+            # Too narrow for both: drop the fleet overview, show only the focused panel.
+            layout["middle"].update(selected_gpu_panel(selected, history, gpu_power_limit, gpu_nvlink_limit, console_width=console_width))
     else:
-        layout["middle"].update(fleet_panel(states, history, columns=1 if len(states) <= 1 else 2, power_limits=power_limits, nvlink_bw_limits=nvlink_bw_limits))
+        # Main fleet view — same proportional layout code as the focused-mode mini-fleet.
+        fleet_h = console_height - SUMMARY_PANEL_ROWS - FOOTER_PANEL_ROWS - FLEET_PANEL_BORDER
+        layout["middle"].update(build_fleet_panel(states, history, console_width, fleet_h, power_limits, nvlink_bw_limits, controller=controller))
     return layout
 
 
@@ -2672,12 +3011,12 @@ Interactive commands:
   Esc          Cancel an unfinished command after ':'
 
 Backend selection:
-  --backend prometheus     (default) Read metrics from the dcgm-exporter
+  --backend prometheus     Read metrics from the dcgm-exporter
                            Prometheus HTTP endpoint.  Profiling fields (SM, tensor,
                            DRAM) update at the exporter's configured interval,
                            typically ~30 seconds.  Best for fleet-level monitoring.
 
-  --backend dcgm           Query dcgmi dmon directly.  Each poll cycle invokes
+  --backend dcgm           (default) Query dcgmi dmon directly.  Each poll cycle invokes
                            dcgmi dmon -c 2, giving true per-sample resolution
                            (down to 100ms with --poll 0.1).  Best for single-node
                            workload profiling.  Requires the DCGM daemon to be
@@ -2710,11 +3049,11 @@ def main() -> int:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--source", default="http://localhost:9400/metrics", help="Path to a dcgm-exporter text file or an http(s) /metrics endpoint. Default: http://localhost:9400/metrics")
-    parser.add_argument("--backend", choices=["prometheus", "dcgm"], default="prometheus",
+    parser.add_argument("--backend", choices=["prometheus", "dcgm"], default="dcgm",
                         help="Metric collection backend. 'prometheus' reads from dcgm-exporter HTTP endpoint "
                              "(~30s resolution for profiling fields). 'dcgm' queries dcgmi dmon directly for "
-                             "true high-resolution sampling (down to 100ms). Default: prometheus")
-    parser.add_argument("--poll", type=float, default=1.0, help="Sampling/refresh interval in seconds. With --backend dcgm, drives a persistent dcgmi stream and is honored down to a 100ms floor (DCGM profiling counters refresh at ~10Hz internally; smaller values would yield blank profiling rows). With --backend prometheus, must be >= 1.0 (dcgm-exporter scrapes profiling fields at ~30s, so sub-second values just duplicate samples). Default: 1.0")
+                             "true high-resolution sampling (down to 100ms). Default: dcgm")
+    parser.add_argument("--poll", type=float, default=None, help="Sampling/refresh interval in seconds. With --backend dcgm, drives a persistent dcgmi stream and is honored down to a 100ms floor (DCGM profiling counters refresh at ~10Hz internally; smaller values would yield blank profiling rows). With --backend prometheus, must be >= 1.0 (dcgm-exporter scrapes profiling fields at ~30s, so sub-second values just duplicate samples). Default: 0.1 (dcgm) / 1.0 (prometheus).")
     parser.add_argument("--history", type=int, default=120, help="Number of samples kept for sparkline history. Default: 120")
     parser.add_argument("--focus-gpu", default=None, help="Start in focused view for one GPU id, for example 0")
     parser.add_argument("--once", action="store_true", help="Render one snapshot and exit instead of running live")
@@ -2745,6 +3084,10 @@ def main() -> int:
     controller = CommandController(args.focus_gpu)
 
     use_dcgm_backend = args.backend == "dcgm"
+    # Backend-aware --poll default: 100 ms for the high-res dcgm stream, 1 s for the
+    # prometheus scrape (sub-second prometheus polling is rejected further below).
+    if args.poll is None:
+        args.poll = 0.1 if use_dcgm_backend else 1.0
     dcgm_physical_gpu_ids: Optional[List[str]] = None
     dcgm_phys_to_local: Dict[str, str] = {}
 
@@ -2926,6 +3269,7 @@ def main() -> int:
             pcie_info,
             nvlink_bw_limits,
             console_height=console.height,
+            console_width=console.width,
             weights=args.weights,
             gpu_processes=cached_gpu_procs,
             cpu_info=cached_cpu_info,
@@ -3005,7 +3349,8 @@ def main() -> int:
             last_render = time.time()
             cached_layout = None
             prev_cmd_state = (controller.command_mode, controller.buffer, controller.last_message,
-                              controller.focus_gpu, controller.line_mode, controller.jobs_mode)
+                              controller.focus_gpu, controller.line_mode, controller.jobs_mode,
+                              controller.fleet_scroll_offset)
             while True:
                 try:
                     controller.handle_input(current_visible_ids)
@@ -3017,7 +3362,8 @@ def main() -> int:
                         last_fetch = now
                         cached_layout = None  # force rebuild after new data
                     cur_cmd_state = (controller.command_mode, controller.buffer, controller.last_message,
-                                     controller.focus_gpu, controller.line_mode, controller.jobs_mode)
+                                     controller.focus_gpu, controller.line_mode, controller.jobs_mode,
+                                     controller.fleet_scroll_offset)
                     if cur_cmd_state != prev_cmd_state:
                         cached_layout = None  # force rebuild after command state change
                         prev_cmd_state = cur_cmd_state

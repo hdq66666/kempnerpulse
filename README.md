@@ -85,6 +85,43 @@ Or install from source:
 pip install .
 ```
 
+### Install as a standalone CLI with `uv`
+
+[`uv`](https://docs.astral.sh/uv/) can install KempnerPulse as an **isolated command-line tool that is available from any directory** — no virtual environment to activate, and isolated from your other Python packages:
+
+```bash
+uv tool install kempnerpulse   # isolated install; exposes the `kempnerpulse` command
+uv tool update-shell           # one-time: add uv's tool bin dir (e.g. ~/.local/bin) to your PATH
+kempnerpulse --help            # now runnable from anywhere
+```
+
+**From a local source checkout** (e.g. a clone of this repo), pass the path — *not* the package name. A bare `uv tool install kempnerpulse` always resolves from PyPI, regardless of your current directory:
+
+```bash
+uv tool install .              # build & install a snapshot of the local source
+uv tool install -e .           # editable: source edits are reflected without reinstalling
+```
+
+If the `kempnerpulse` command is already installed (e.g. from an earlier PyPI install), uv refuses with `error: Executable already exists: kempnerpulse`. Add `--force` to overwrite it:
+
+```bash
+uv tool install --force -e .   # overwrite an existing `kempnerpulse` executable
+```
+
+Run it once without installing (ephemeral, cached):
+
+```bash
+uvx kempnerpulse --help
+```
+
+Upgrade or remove later:
+
+```bash
+uv tool upgrade kempnerpulse
+uv tool uninstall kempnerpulse
+```
+
+
 If you prefer not to perform a full installation, you can run the wrapper script directly from the login node by targeting your active GPU node.
 
 > **Note:** `kempnerpulse-on-cnode.sh` currently works only on the **FASRC cluster** for the shared kempnerpulse virtual environment to be available on the target compute node, and will exit gracefully if the environment is not found.
