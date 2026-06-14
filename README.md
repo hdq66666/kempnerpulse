@@ -124,7 +124,7 @@ uv tool uninstall kempnerpulse
 
 If you prefer not to perform a full installation, you can run the wrapper script directly from the login node by targeting your active GPU node.
 
-> **Note:** `kempnerpulse-on-cnode.sh` currently works only on the **FASRC cluster** for the shared kempnerpulse virtual environment to be available on the target compute node, and will exit gracefully if the environment is not found.
+> **Note:** `scripts/kempnerpulse-on-cnode.sh` currently works only on the **FASRC cluster** for the shared kempnerpulse virtual environment to be available on the target compute node, and will exit gracefully if the environment is not found.
 
 Identify your compute node:
 ```bash
@@ -134,7 +134,7 @@ squeue -u $USER
 Execute the script (using holygpu8a11101 as an example):
 
 ```bash
-./kempnerpulse-on-cnode.sh holygpu8a11101
+./scripts/kempnerpulse-on-cnode.sh holygpu8a11101
 ```
 
 To exit, press `Ctrl-C`.
@@ -144,13 +144,13 @@ To exit, press `Ctrl-C`.
 If your kempnerpulse install lives somewhere other than the shared FASRC path, set `KEMPNERPULSE_VENVPATH` to the venv root directory (the script appends `bin/activate`):
 
 ```bash
-KEMPNERPULSE_VENVPATH=$HOME/path/to/your/venv ./kempnerpulse-on-cnode.sh holygpu8a11101
+KEMPNERPULSE_VENVPATH=$HOME/path/to/your/venv ./scripts/kempnerpulse-on-cnode.sh holygpu8a11101
 ```
 
-After a successful run with the override, the script asks whether to save it as the new default. Answering **yes** rewrites the hardcoded `venv_activate=…` line inside `kempnerpulse-on-cnode.sh` and leaves a `kempnerpulse-on-cnode.sh.bak` next to the script for recovery. Answering anything else (the default) leaves the script unchanged. To revert, move the backup back into place:
+After a successful run with the override, the script asks whether to save it as the new default. Answering **yes** rewrites the hardcoded `venv_activate=…` line inside `scripts/kempnerpulse-on-cnode.sh` and leaves a `scripts/kempnerpulse-on-cnode.sh.bak` next to the script for recovery. Answering anything else (the default) leaves the script unchanged. To revert, move the backup back into place:
 
 ```bash
-mv kempnerpulse-on-cnode.sh.bak kempnerpulse-on-cnode.sh
+mv scripts/kempnerpulse-on-cnode.sh.bak scripts/kempnerpulse-on-cnode.sh
 ```
 
 
