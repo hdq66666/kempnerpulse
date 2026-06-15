@@ -150,7 +150,7 @@ def parse_dmon_block(
     timestamp: Optional[float] = None,
     wallclock: Optional[float] = None,
 ) -> List[RawRecord]:
-    """Parse ``dcgmi dmon`` rows into ``RawRecord``s, one per ``GPU <id>`` row.
+    """Parse ``dcgmi dmon`` rows into ``RawRecord`` objects, one per ``GPU <id>`` row.
 
     Each record's ``fields`` map DCGM field names to raw values (``None`` for
     ``N/A``). Header (``#``), ``ID``, and non-data lines are skipped. Every
@@ -221,7 +221,7 @@ def read_once(
     interval_ms: int = 100,
     timeout: float = 15.0,
 ) -> List[RawRecord]:
-    """Collect a single tick from ``dcgmi dmon`` as ``RawRecord``s.
+    """Collect a single tick from ``dcgmi dmon`` as ``RawRecord`` objects.
 
     Returns the records from both requested samples in order; the caller's
     last-non-``None``-wins merge keeps the valid second-tick values.
@@ -230,7 +230,7 @@ def read_once(
 
 
 class DcgmiBackend:
-    """Persistent ``dcgmi dmon -c 0`` stream emitting ``RawRecord``s.
+    """Persistent ``dcgmi dmon -c 0`` stream emitting ``RawRecord`` objects.
 
     The reader is thread-free: ``stream_ticks`` is a blocking generator that
     iterates the subprocess stdout, groups rows into ticks, and yields one list
@@ -298,7 +298,7 @@ class DcgmiBackend:
     # ── streaming ────────────────────────────────────────────────────────
 
     def stream_ticks(self) -> Iterator[List[RawRecord]]:
-        """Yield one list of ``RawRecord``s per sampling tick.
+        """Yield one list of ``RawRecord`` objects per sampling tick.
 
         A tick ends when a ``GPU <id>`` row repeats an id already buffered for
         the current tick. The first tick is dropped. Raises ``DcgmStreamError``

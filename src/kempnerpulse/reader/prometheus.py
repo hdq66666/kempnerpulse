@@ -55,7 +55,7 @@ def parse_prometheus_records(
     timestamp: Optional[float] = None,
     wallclock: Optional[float] = None,
 ) -> List[RawRecord]:
-    """Parse exposition text into ``RawRecord``s, one per labelled entity.
+    """Parse exposition text into ``RawRecord`` objects, one per labelled entity.
 
     A metric line's entity key is its ``gpu`` label (falling back to ``UUID``
     then ``device``); lines without one are skipped. Bare (unlabelled) metric

@@ -31,7 +31,7 @@ _SLURM_FIELDS = (
 
 
 class Translator:
-    """Maps ``RawRecord``s to ``CanonicalRecord``s under a fixed ``SourceContext``."""
+    """Maps ``RawRecord`` objects to ``CanonicalRecord`` objects under a fixed ``SourceContext``."""
 
     def __init__(self, ctx: SourceContext) -> None:
         self.ctx = ctx

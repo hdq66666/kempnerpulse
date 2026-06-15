@@ -1,6 +1,6 @@
 """Rich panels and the line-plot renderable.
 
-Every widget consumes :class:`ComputedRecord`s and reads metric values from the
+Every widget consumes :class:`ComputedRecord` objects and reads metric values from the
 wrapped :class:`CanonicalRecord` (canonical fractions/SI), converting to display
 units at render time via :mod:`.format`. The responsive layout — fixed-width
 bars, stacked-vs-two-column card detail, fixed-width health/status badges,

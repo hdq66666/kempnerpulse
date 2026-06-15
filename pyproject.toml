@@ -52,3 +52,13 @@ include = ["kempnerpulse*"]
 # a runtime dependency) plus this group, so the tests "just work" with no flags.
 [dependency-groups]
 dev = ["pytest>=8"]
+# Documentation: Sphinx + Furo theme + MyST (Markdown). Build with
+# `uv run --group docs make -C docs html` (or `make -C docs live` to preview).
+docs = [
+    "sphinx>=7.0",
+    "furo>=2024.1",
+    "myst-parser>=3.0",
+    "linkify-it-py>=2.0",
+    "sphinx-copybutton>=0.5",
+    "sphinx-autobuild>=2024.4",
+]

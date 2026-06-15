@@ -1,7 +1,7 @@
 """KempnerPulse Layer 2 — Translate.
 
-Maps Layer-1 ``RawRecord``s (source vocabulary, raw values) to
-``CanonicalRecord``s (one stable internal vocabulary). This package currently
+Maps Layer-1 ``RawRecord`` objects (source vocabulary, raw values) to
+``CanonicalRecord`` objects (one stable internal vocabulary). This package currently
 defines the canonical schema — the inter-layer contract that Layers 3 and 4
 depend on. The translator that produces canonical records (mapping tables, unit
 normalization, missing-value policy, counter differencing) lands on top of it.

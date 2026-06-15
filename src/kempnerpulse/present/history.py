@@ -3,7 +3,7 @@
 The plot and focus views need short rolling histories of *display-unit* series
 (percent, GB/s, W, °C, …) per GPU. :class:`HistoryStore` is a fixed-capacity
 ring buffer keyed by ``(gpu_id, series_key)``; :func:`update_history` reads one
-batch of :class:`ComputedRecord`s, converts canonical values to display units,
+batch of :class:`ComputedRecord` objects, converts canonical values to display units,
 and pushes them under the keys the views read.
 
 Series keys (the contract the views depend on)::

@@ -1,6 +1,6 @@
 """KempnerPulse Layer 4 — Present.
 
-The terminal UI and CSV export. This layer consumes :class:`ComputedRecord`s
+The terminal UI and CSV export. This layer consumes :class:`ComputedRecord` objects
 (canonical metric values plus the derived Real Utilization / classification /
 health signals) and renders them — it converts canonical fractions/SI to display
 units (percent, GB/s, …) itself and never reaches back into source vocabulary.

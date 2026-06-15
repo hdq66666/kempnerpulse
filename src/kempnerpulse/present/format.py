@@ -1,6 +1,6 @@
 """Display formatting, styling, and canonical→display unit conversion.
 
-The Present layer renders ``ComputedRecord``s whose metric values are canonical:
+The Present layer renders ``ComputedRecord`` objects whose metric values are canonical:
 ratios in ``[0, 1]``, throughputs in bytes/second, energy in joules, and so on.
 Display, however, wants percents, GB/s, and watts. The converters here are the
 single place that bridge the two: a presenter never multiplies by 100 inline,

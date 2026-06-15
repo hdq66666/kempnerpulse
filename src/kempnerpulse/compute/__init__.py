@@ -1,8 +1,8 @@
 """KempnerPulse Layer 3 — Compute.
 
-Pure-functional domain logic over ``CanonicalRecord``s: the Real Utilization
+Pure-functional domain logic over ``CanonicalRecord`` objects: the Real Utilization
 composite, the workload classification cascade, and health. Outputs are
-``ComputedRecord``s for the Present layer. No I/O, no source vocabulary.
+``ComputedRecord`` objects for the Present layer. No I/O, no source vocabulary.
 
 ``compute_record`` (single sample) and ``compute_tick`` (one tick, threading the
 previous record per GPU) are the entry points; the building blocks

@@ -85,7 +85,7 @@ class Backend(Protocol):
         ...
 
     def stream(self) -> Iterator[RawRecord]:
-        """Yield ``RawRecord``s until the source is exhausted or ``close()`` is called."""
+        """Yield ``RawRecord`` objects until the source is exhausted or ``close()`` is called."""
         ...
 
     def close(self) -> None:

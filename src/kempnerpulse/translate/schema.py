@@ -3,7 +3,7 @@
 ``CanonicalRecord`` is the single internal vocabulary that Layers 3 (Compute)
 and 4 (Present) depend on. Layer 2 (Translate) is the only layer that knows
 about source vocabularies (DCGM field IDs, Prometheus names), units, and
-backend quirks; it emits ``CanonicalRecord``s and nothing above it ever sees a
+backend quirks; it emits ``CanonicalRecord`` objects and nothing above it ever sees a
 vendor identifier again.
 
 Field-naming convention (every field follows ``<scope>_<subsystem>_<aspect>_<unit>``):

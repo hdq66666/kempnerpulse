@@ -1,7 +1,7 @@
 """KempnerPulse Layer 1 — Read.
 
 Backends acquire raw data from a single source and emit a stream of opaque
-``RawRecord``s in that source's own vocabulary. Interpreting those records
+``RawRecord`` objects in that source's own vocabulary. Interpreting those records
 (canonical names, units, missing-value policy) belongs to Layer 2, not here.
 ``make_backend`` selects a backend from a ``ReaderConfig``.
 """

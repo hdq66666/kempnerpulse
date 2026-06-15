@@ -2,7 +2,7 @@
 
 Verifies that ``dcgmi`` is present and the DCGM host engine answers before a
 stream is opened, and returns the discovery output so GPU IDs can be resolved.
-Failures raise typed ``ReaderError``s carrying an actionable remediation string
+Failures raise typed ``ReaderError`` objects carrying an actionable remediation string
 rather than leaving a cryptic subprocess error to surface later.
 """
 from __future__ import annotations
