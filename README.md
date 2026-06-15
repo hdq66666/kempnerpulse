@@ -1,6 +1,6 @@
 # KempnerPulse
 
-[![PyPI](https://img.shields.io/pypi/v/kempnerpulse)](https://pypi.org/project/kempnerpulse/)
+[![PyPI](https://img.shields.io/pypi/v/kempnerpulse)](https://pypi.org/project/kempnerpulse/) [![Tests](https://github.com/KempnerInstitute/kempnerpulse/actions/workflows/tests.yml/badge.svg)](https://github.com/KempnerInstitute/kempnerpulse/actions/workflows/tests.yml)
 
 > `nvidia-smi` says 100% GPU utilization — but are your tensor cores even active? KempnerPulse shows what's *actually* happening.
 
