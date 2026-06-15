@@ -33,8 +33,32 @@ dependencies = [
 ]
 
 [project.scripts]
-kempnerpulse = "kempner_pulse:main"
+kempnerpulse = "kempnerpulse.__main__:main"
+kp = "kempnerpulse.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/KempnerInstitute/kempnerpulse"
 Issues = "https://github.com/KempnerInstitute/kempnerpulse/issues"
+
+[tool.setuptools]
+# src layout: the layered package lives under src/; the empty-string key roots imports there.
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["kempnerpulse*"]
+
+# Dev/test tooling. `uv run pytest` installs the project (which brings in rich,
+# a runtime dependency) plus this group, so the tests "just work" with no flags.
+[dependency-groups]
+dev = ["pytest>=8"]
+# Documentation: Sphinx + Furo theme + MyST (Markdown). Build with
+# `uv run --group docs make -C docs html` (or `make -C docs live` to preview).
+docs = [
+    "sphinx>=7.0",
+    "furo>=2024.1",
+    "myst-parser>=3.0",
+    "linkify-it-py>=2.0",
+    "sphinx-copybutton>=0.5",
+    "sphinx-autobuild>=2024.4",
+]
