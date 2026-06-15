@@ -5,12 +5,16 @@ cross-cutting tier. Data flows strictly top to bottom; each layer depends only
 on the ones above it, and each has a single responsibility.
 
 ```
-                 ┌─────────────────────────────────────────────┐
-   source ──────▶│ Read       reader/      → RawRecord          │
-                 │ Translate  translate/   → CanonicalRecord     │
-                 │ Compute    compute/      → ComputedRecord      │
-                 │ Present    present/      → terminal UI / CSV   │
-                 └─────────────────────────────────────────────┘
+   source
+      │
+      ▼
+   ┌─────────────────────────────────────────────┐
+   │ Read       reader/     →  RawRecord         │
+   │ Translate  translate/  →  CanonicalRecord   │
+   │ Compute    compute/    →  ComputedRecord    │
+   │ Present    present/    →  terminal UI / CSV │
+   └─────────────────────────────────────────────┘
+
    cross-cutting: config · identification · selection · system_queries · lifecycle
 ```
 
