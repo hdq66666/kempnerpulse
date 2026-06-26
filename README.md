@@ -22,6 +22,40 @@ classification**, and renders four interactive views in the terminal.
 - **SLURM / CUDA aware** — shows only your allocated GPUs.
 - **Lightweight** — standard library + `rich`; ~8% of one CPU core.
 
+## V100 Custom Improvements
+
+The `v100-custom` branch keeps the upstream behavior by default and adds a set
+of V100/NVLink-focused improvements:
+
+- **NVLink source selection** — direct DCGM mode now probes NVLink counters at
+  startup, prefers `DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL` (field `449`), and falls
+  back to `DCGM_FI_PROF_NVLINK_TX_BYTES` / `DCGM_FI_PROF_NVLINK_RX_BYTES`
+  (fields `1011` / `1012`) only when field `449` has no usable data.
+- **Fast NVLink polling** — `--sp-fast` keeps the full dashboard metric stream at
+  a stable 1 second cadence while polling a lightweight NVLink-only stream at
+  `--poll`, so NVLink can refresh quickly without disturbing slower profiling
+  counters.
+- **NVLink fit display/export** — `--nvlink-fit SCALE[,OFFSET]` displays a fitted
+  estimate as `raw fittedGB/s` while preserving the raw `nvlink_gbps` value; CSV
+  export adds `nvlink_est_gbps` for the fitted value.
+- **Focus view left pane** — `:focus` now keeps the mini fleet in a vertical
+  single-column layout, making each GPU card readable on narrower terminals.
+- **Focus summary NVLink RX/TX** — real `NVLink RX` and `NVLink TX` readings are
+  shown in the focus summary after `Replay rate` when fields `1011` / `1012` are
+  available. If the selected source is field `449`, these entries stay absent
+  instead of showing synthetic values.
+- **Default NVLink Delta preserved** — the existing `NVLink Δ` aggregate remains
+  in the fleet cards and focus summary, still backed by field `449` when it is
+  readable.
+- **Focus table cleanup** — the old `NVLink Δ` metric row was removed from the
+  focus table to avoid width jitter with fitted values, and the
+  `Interconnect & Power` section was renamed to `Others`.
+- **Fast export overlay** — CSV export can overlay fast NVLink samples onto the
+  latest full metric records when `--sp-fast` is enabled.
+- **Test coverage** — unit tests cover custom DCGM field parsing, NVLink fallback
+  aggregation, fitted CSV output, vertical focus layout, and focus summary
+  placement of `NVLink RX` / `NVLink TX`.
+
 ## Install
 
 ```bash
@@ -42,6 +76,7 @@ kp --focus-gpu 0                  # start focused on GPU 0
 kp --hpc-weights                  # HPC weight preset
 kp --export all > metrics.csv     # CSV capture
 kp --backend prometheus --source http://host:9400/metrics
+kp --backend dcgm --poll 0.1 --sp-fast --nvlink-fit 1.37
 ```
 
 Press `Ctrl-C` to quit; type `:focus <id>`, `:plot`, `:job`, or `:q` to switch views.
