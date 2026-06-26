@@ -326,10 +326,12 @@ def test_selected_focus_panel_keeps_only_default_nvlink_delta():
     console.print(panel)
     text = console.file.getvalue()
 
-    assert "Interconnect & Power" in text
+    assert "── Others" in text
+    assert "Interconnect & Power" not in text
     assert text.count("NVLink Δ") == 1
     assert "NVLink RX" in text
     assert "NVLink TX" in text
+    assert text.index("Replay rate") < text.index("NVLink RX") < text.index("NVLink TX")
     assert "111.8GiB/s" in text
     assert "102.4GiB/s" in text
 
