@@ -152,7 +152,7 @@ def fmt_nvlink_gbps(
     if gbps is None or math.isnan(gbps):
         return "--"
     est = apply_nvlink_fit(gbps, fit)
-    if fit is None or est is None or math.isnan(est):
+    if fit is None or gbps <= 0 or est is None or math.isnan(est):
         return fmt_gbps(gbps)
     return f"{gbps:.1f} {est:.1f}GB/s↑"
 

@@ -26,6 +26,7 @@ from kempnerpulse.present import (
     update_history,
 )
 from kempnerpulse.present import UnknownExportColumns
+from kempnerpulse.present.format import fmt_nvlink_gbps
 
 
 # ── Builders ──────────────────────────────────────────────────────────────────
@@ -279,6 +280,34 @@ def test_render_dashboard_all_view_modes(mode):
     assert console.file.getvalue()
 
 
+def test_fleet_view_uses_single_file_column_rule(monkeypatch):
+    from rich.panel import Panel
+    from kempnerpulse.present import tui
+
+    calls = []
+
+    def fake_fleet_panel(*args, **kwargs):
+        calls.append(kwargs)
+        return Panel("fleet")
+
+    monkeypatch.setattr(tui, "fleet_panel", fake_fleet_panel)
+    records = [_fully_populated()] + [
+        _computed(gpu_index=i, entity_gpu_uuid=f"GPU-{i}") for i in range(1, 4)
+    ]
+    history = HistoryStore()
+    controller = CommandController()
+    out = render_dashboard(
+        records, history,
+        console_width=240, console_height=60,
+        controller=controller, summary_context=SummaryContext(),
+    )
+    console = Console(file=io.StringIO(), width=240, height=60)
+    console.print(out)
+
+    assert calls
+    assert calls[0]["cards_per_row"] == 2
+
+
 def test_focus_view_forces_mini_fleet_single_column(monkeypatch):
     from rich.panel import Panel
     from kempnerpulse.present import tui
@@ -306,6 +335,26 @@ def test_focus_view_forces_mini_fleet_single_column(monkeypatch):
 
     assert calls
     assert calls[0]["force_single_column"] is True
+
+
+def test_footer_keeps_single_file_left_order():
+    from kempnerpulse.present.tui import footer_panel
+
+    controller = CommandController()
+    controller.last_message = "Returned to fleet view"
+    panel = footer_panel("0,1", controller, weights=(0.35, 0.35, 0.20, 0.10),
+                         console_width=160)
+    console = Console(file=io.StringIO(), width=160, height=5)
+    console.print(panel)
+    text = console.file.getvalue()
+
+    assert text.index("Visible 0,1") < text.index("AI/ML Workflow")
+    assert text.index("AI/ML Workflow") < text.index("Commands Returned to fleet view")
+
+
+def test_zero_nvlink_fit_uses_plain_display():
+    assert fmt_nvlink_gbps(0.0, (1.37, 0.0)) == "0.00GB/s"
+    assert fmt_nvlink_gbps(10.0, (1.37, 0.0)) == "10.0 13.7GB/s↑"
 
 
 def test_selected_focus_panel_keeps_only_default_nvlink_delta():

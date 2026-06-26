@@ -27,6 +27,7 @@ from .controller import CommandController
 from .format import fmt_duration
 from .history import HistoryStore
 from .widgets import (
+    CARD_FULL_WIDTH,
     FLEET_PANEL_BORDER,
     FOCUS_SPLIT_LEFT_RATIO,
     FOCUS_SPLIT_MIN_WIDTH,
@@ -37,6 +38,7 @@ from .widgets import (
     MIN_DASH_WIDTH,
     SUMMARY_PANEL_ROWS,
     build_fleet_panel,
+    fleet_panel,
     jobs_view_panel,
     line_plot_view_panel,
     selected_gpu_panel,
@@ -119,35 +121,11 @@ def footer_panel(
     right = Text(right_plain, style="dim", no_wrap=True)
     right_w = len(right_plain)
 
-    left_keys = ["cmd", "visible", "wf"]
-
-    def _left_plain(keys: list) -> str:
-        parts = []
-        if "cmd" in keys:
-            parts.append(f"Commands {msg}")
-        if "visible" in keys:
-            parts.append(f"Visible {selection_text}")
-        if "wf" in keys:
-            parts.append(wf_label)
-        return "   ".join(parts)
-
-    left_budget = max(0, console_width - FOOTER_CHROME_WIDTH - right_w)
-    for _d in ("wf", "visible"):          # drop workflow, then Visible; always keep Commands
-        if len(_left_plain(left_keys)) <= left_budget:
-            break
-        left_keys = [k for k in left_keys if k != _d]
-    segs = []
-    if "cmd" in left_keys:
-        segs += [("Commands ", "bold"), (msg, "green" if controller.command_mode else "dim")]
-    if "visible" in left_keys:
-        if segs:
-            segs.append(("   ", ""))
-        segs += [("Visible ", "bold cyan"), (selection_text, "dim")]
-    if "wf" in left_keys:
-        if segs:
-            segs.append(("   ", ""))
-        segs.append((wf_label, "bold magenta"))
-    left = Text.assemble(*segs) if segs else Text("")
+    left = Text.assemble(
+        ("Visible ", "bold cyan"), (selection_text, "dim"),
+        ("   ", ""), (wf_label, "bold magenta"),
+        ("   Commands ", "bold"), (msg, "green" if controller.command_mode else "dim"),
+    )
     left.no_wrap = True
     left.overflow = "ellipsis"
     line = Table.grid(expand=True)
@@ -277,9 +255,14 @@ def render_dashboard(
                 console_width=console_width, nvlink_fit=ctx.nvlink_fit,
             ))
     else:
-        fleet_h = console_height - SUMMARY_PANEL_ROWS - FOOTER_PANEL_ROWS - FLEET_PANEL_BORDER
-        layout["middle"].update(build_fleet_panel(
-            records, history, console_width, fleet_h, ctx.power_limits, ctx.nvlink_bw_limits,
+        cards_per_row = 1 if len(records) <= 1 else 2
+        detail_columns = 2 if console_width // cards_per_row >= CARD_FULL_WIDTH else 1
+        layout["middle"].update(fleet_panel(
+            records, history,
+            cards_per_row=cards_per_row,
+            detail_columns=detail_columns,
+            power_limits=ctx.power_limits,
+            nvlink_bw_limits=ctx.nvlink_bw_limits,
             nvlink_fit=ctx.nvlink_fit,
             controller=controller,
         ))

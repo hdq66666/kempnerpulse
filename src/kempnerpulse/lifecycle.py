@@ -263,6 +263,19 @@ class Pipeline:
             if overlay is None:
                 updated.append(computed)
                 continue
+            current_values = (
+                computed.record.gpu_nvlink_aggregate_throughput_bytes_per_second,
+                computed.record.gpu_nvlink_transmit_throughput_bytes_per_second,
+                computed.record.gpu_nvlink_receive_throughput_bytes_per_second,
+            )
+            overlay_values = (
+                overlay.gpu_nvlink_aggregate_throughput_bytes_per_second,
+                overlay.gpu_nvlink_transmit_throughput_bytes_per_second,
+                overlay.gpu_nvlink_receive_throughput_bytes_per_second,
+            )
+            if overlay_values == current_values:
+                updated.append(computed)
+                continue
             new_record = replace(
                 computed.record,
                 record_timestamp_monotonic_seconds=overlay.record_timestamp_monotonic_seconds,
@@ -465,8 +478,9 @@ def _run_live(config: Config, identity: Identity, pipeline: Pipeline, backend,
             if fast_tick is not None and fast_counter != seen_fast_counter:
                 seen_fast_counter = fast_counter
                 records, changed_records = pipeline.overlay_nvlink(records, fast_tick)
-                update_nvlink_history(history, changed_records)
-                changed = True
+                if changed_records:
+                    update_nvlink_history(history, changed_records)
+                    changed = True
 
         if not changed:
             return
@@ -507,7 +521,7 @@ def _run_live(config: Config, identity: Identity, pipeline: Pipeline, backend,
                 now = time.monotonic()
                 state = (controller.command_mode, controller.buffer, controller.last_message,
                          controller.focus_gpu, controller.line_mode, controller.jobs_mode,
-                         controller.fleet_scroll_offset, seen_counter, seen_fast_counter)
+                         controller.fleet_scroll_offset, seen_counter)
                 if state != last_state:
                     cached = None
                     last_state = state
