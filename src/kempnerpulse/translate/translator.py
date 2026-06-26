@@ -18,6 +18,10 @@ from .context import SourceContext, make_source_context
 from .mapping import GPU_UUID_LABELS, convert, map_field
 from .schema import SCHEMA_VERSION, CanonicalRecord
 
+NVLINK_AGGREGATE_FIELD = "gpu_nvlink_aggregate_throughput_bytes_per_second"
+NVLINK_TX_FIELD = "DCGM_FI_PROF_NVLINK_TX_BYTES"
+NVLINK_RX_FIELD = "DCGM_FI_PROF_NVLINK_RX_BYTES"
+
 # Static-metadata keys read from SourceContext.slurm_metadata -> record fields.
 _SLURM_FIELDS = (
     "record_slurm_job_id",
@@ -54,6 +58,17 @@ class Translator:
                 continue  # unknown source field or a non-identity label
             canonical_name, unit_kind = mapped
             canonical[canonical_name] = convert(unit_kind, value)
+
+        # DCGM field 449 is the preferred aggregate NVLink gauge. On some
+        # systems it reports N/A while profiling fields 1011/1012 still expose
+        # usable TX/RX rates, so synthesize the same canonical aggregate.
+        if canonical.get(NVLINK_AGGREGATE_FIELD) is None:
+            tx = raw.fields.get(NVLINK_TX_FIELD)
+            rx = raw.fields.get(NVLINK_RX_FIELD)
+            if tx is not None or rx is not None:
+                canonical[NVLINK_AGGREGATE_FIELD] = (
+                    float(tx or 0.0) + float(rx or 0.0)
+                )
 
         # Derived: total framebuffer = used + free + reserved (when all present).
         used = canonical.get("gpu_framebuffer_used_mebibytes")
