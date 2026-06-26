@@ -733,12 +733,20 @@ def selected_gpu_panel(
         metric_rows.append("Tensor Core Detail")
         metric_rows.extend(tc_rows)
 
+    nvlink_real_rows = []
+    nvlink_rx_bytes_s = _raw(rec, "gpu_nvlink_receive_throughput_bytes_per_second")
+    nvlink_tx_bytes_s = _raw(rec, "gpu_nvlink_transmit_throughput_bytes_per_second")
+    if nvlink_rx_bytes_s is not None:
+        nvlink_real_rows.append(("NVLink RX", nvlink_rx_bytes_s, None, None))
+    if nvlink_tx_bytes_s is not None:
+        nvlink_real_rows.append(("NVLink TX", nvlink_tx_bytes_s, None, None))
+
     metric_rows.extend([
         "Memory",
         ("DRAM", _pct_of(rec, "gpu_dram_controller_active_cycle_fraction"), "dram", 100),
         ("Memory used", _mem_used_pct(rec), "mem_used_pct", 100),
         "Interconnect & Power",
-        ("NVLink Δ", nvlink_gbps, None, nvlink_max),
+        *nvlink_real_rows,
         ("Power", _raw(rec, "gpu_board_power_draw_watts"), "power", None),
         ("GPU temp", _raw(rec, "gpu_die_temperature_celsius"), "gpu_temp", None),
     ])
@@ -772,6 +780,11 @@ def selected_gpu_panel(
                 pct_for_bar = 0.0 if value is None else min(100.0, value / nv_cap * 100.0)
                 bar = make_bar(pct_for_bar, 22, style_override=nv_style)
                 trend = Text(sparkline(history.get(gpu, "nvlink_gbps"), 28, vmax), style=nv_style)
+        elif label in {"NVLink RX", "NVLink TX"}:
+            gbps = bytes_per_second_to_gigabytes(value)
+            now = Text(fmt_bytes_per_s(value), style=nvlink_util_style(gbps, nvlink_max))
+            bar = Text("")
+            trend = Text("")
         elif "temp" in label.lower():
             now = Text(fmt_temp(value), style=temp_style(value, rec.model_name))
             bar = make_bar(min(100.0, (value or 0.0)), 22, style_override=temp_style(value, rec.model_name))

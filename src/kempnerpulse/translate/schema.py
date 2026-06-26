@@ -128,8 +128,10 @@ class CanonicalRecord:
     gpu_pcie_receive_throughput_bytes_per_second: Optional[float] = None
     gpu_pcie_replay_count: Optional[int] = None
 
-    # ── NVLink — aggregate rate; per-link reserved, not collected ────────────
+    # ── NVLink — aggregate plus real TX/RX rates when profiling fields are present
     gpu_nvlink_aggregate_throughput_bytes_per_second: Optional[float] = None
+    gpu_nvlink_transmit_throughput_bytes_per_second: Optional[float] = None
+    gpu_nvlink_receive_throughput_bytes_per_second: Optional[float] = None
 
     # ── Power and energy ─────────────────────────────────────────────────────
     gpu_board_power_draw_watts: Optional[float] = None
@@ -243,6 +245,8 @@ NONNEGATIVE_MAGNITUDE_FIELDS = (
     "gpu_pcie_transmit_throughput_bytes_per_second",
     "gpu_pcie_receive_throughput_bytes_per_second",
     "gpu_nvlink_aggregate_throughput_bytes_per_second",
+    "gpu_nvlink_transmit_throughput_bytes_per_second",
+    "gpu_nvlink_receive_throughput_bytes_per_second",
     "gpu_board_power_draw_watts",
     "gpu_board_total_energy_joules",
     "gpu_board_enforced_power_limit_watts",

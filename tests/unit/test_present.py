@@ -104,6 +104,8 @@ def _fully_populated() -> ComputedRecord:
         gpu_pcie_receive_throughput_bytes_per_second=1.5e9,
         gpu_pcie_transmit_throughput_bytes_per_second=2.5e9,
         gpu_nvlink_aggregate_throughput_bytes_per_second=900e9,  # -> 900 GB/s
+        gpu_nvlink_transmit_throughput_bytes_per_second=110e9,
+        gpu_nvlink_receive_throughput_bytes_per_second=120e9,
         gpu_board_power_draw_watts=351.0,
         gpu_board_total_energy_joules=12345.6,
         gpu_die_temperature_celsius=62.0,
@@ -304,6 +306,32 @@ def test_focus_view_forces_mini_fleet_single_column(monkeypatch):
 
     assert calls
     assert calls[0]["force_single_column"] is True
+
+
+def test_selected_focus_panel_keeps_only_default_nvlink_delta():
+    from kempnerpulse.present.widgets import selected_gpu_panel
+
+    rec = _fully_populated()
+    history = HistoryStore()
+    update_history(history, [rec])
+    panel = selected_gpu_panel(
+        rec,
+        history,
+        power_limit=700.0,
+        nvlink_limit=900.0,
+        console_width=220,
+        nvlink_fit=(1.37, 2.0),
+    )
+    console = Console(file=io.StringIO(), width=220, height=50)
+    console.print(panel)
+    text = console.file.getvalue()
+
+    assert "Interconnect & Power" in text
+    assert text.count("NVLink Δ") == 1
+    assert "NVLink RX" in text
+    assert "NVLink TX" in text
+    assert "111.8GiB/s" in text
+    assert "102.4GiB/s" in text
 
 
 def test_render_dashboard_too_small_gate():

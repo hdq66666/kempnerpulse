@@ -61,6 +61,10 @@ SOURCE_FIELD_MAP = {
     # NVLink aggregate (source reports an MB/s gauge)
     "DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL":
         ("gpu_nvlink_aggregate_throughput_bytes_per_second", "megabytes_ps"),
+    "DCGM_FI_PROF_NVLINK_TX_BYTES":
+        ("gpu_nvlink_transmit_throughput_bytes_per_second", "number"),
+    "DCGM_FI_PROF_NVLINK_RX_BYTES":
+        ("gpu_nvlink_receive_throughput_bytes_per_second", "number"),
     # Power and energy
     "DCGM_FI_DEV_POWER_USAGE":
         ("gpu_board_power_draw_watts", "number"),

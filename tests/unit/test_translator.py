@@ -40,12 +40,16 @@ def test_nvlink_profile_fields_fallback_when_aggregate_missing():
     _, recs = _translate_all()
     g0t2 = recs[2]  # aggregate field is N/A, profiling TX/RX are valid
     assert g0t2.gpu_nvlink_aggregate_throughput_bytes_per_second == 230e9
+    assert g0t2.gpu_nvlink_transmit_throughput_bytes_per_second == 110e9
+    assert g0t2.gpu_nvlink_receive_throughput_bytes_per_second == 120e9
 
 
 def test_nvlink_aggregate_field_takes_precedence_over_profile_fields():
     _, recs = _translate_all()
     g1t2 = recs[3]  # aggregate field is present, so TX/RX are ignored
     assert g1t2.gpu_nvlink_aggregate_throughput_bytes_per_second == 25600 * 1e6
+    assert g1t2.gpu_nvlink_transmit_throughput_bytes_per_second == 210e9
+    assert g1t2.gpu_nvlink_receive_throughput_bytes_per_second == 220e9
 
 
 def test_framebuffer_total_derived():

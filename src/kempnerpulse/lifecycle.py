@@ -268,6 +268,8 @@ class Pipeline:
                 record_timestamp_monotonic_seconds=overlay.record_timestamp_monotonic_seconds,
                 record_timestamp_wallclock_unix_seconds=overlay.record_timestamp_wallclock_unix_seconds,
                 gpu_nvlink_aggregate_throughput_bytes_per_second=overlay.gpu_nvlink_aggregate_throughput_bytes_per_second,
+                gpu_nvlink_transmit_throughput_bytes_per_second=overlay.gpu_nvlink_transmit_throughput_bytes_per_second,
+                gpu_nvlink_receive_throughput_bytes_per_second=overlay.gpu_nvlink_receive_throughput_bytes_per_second,
             )
             new_computed = replace(computed, record=new_record)
             updated.append(new_computed)
