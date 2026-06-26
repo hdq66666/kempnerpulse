@@ -75,6 +75,7 @@ class SummaryContext:
     nvlink_bw_limits: Dict[str, float] = field(default_factory=dict)
     pcie_bw_limits: Dict[str, float] = field(default_factory=dict)
     pcie_info: str = ""              # PCIe-bandwidth label for the plot title
+    nvlink_fit: Optional[Tuple[float, float]] = None
 
     # Per-GPU process listing for the Job View.
     gpu_processes: Dict[str, List[GpuProcess]] = field(default_factory=dict)
@@ -262,19 +263,24 @@ def render_dashboard(
             panel_w = console_width * FOCUS_SPLIT_RIGHT_RATIO // total_ratio
             layout["middle"]["left"].update(build_fleet_panel(
                 records, history, left_w, fleet_h, ctx.power_limits, ctx.nvlink_bw_limits,
+                nvlink_fit=ctx.nvlink_fit,
                 controller=controller,
+                force_single_column=True,
             ))
             layout["middle"]["right"].update(selected_gpu_panel(
-                selected, history, gpu_power_limit, gpu_nvlink_limit, console_width=panel_w,
+                selected, history, gpu_power_limit, gpu_nvlink_limit,
+                console_width=panel_w, nvlink_fit=ctx.nvlink_fit,
             ))
         else:
             layout["middle"].update(selected_gpu_panel(
-                selected, history, gpu_power_limit, gpu_nvlink_limit, console_width=console_width,
+                selected, history, gpu_power_limit, gpu_nvlink_limit,
+                console_width=console_width, nvlink_fit=ctx.nvlink_fit,
             ))
     else:
         fleet_h = console_height - SUMMARY_PANEL_ROWS - FOOTER_PANEL_ROWS - FLEET_PANEL_BORDER
         layout["middle"].update(build_fleet_panel(
             records, history, console_width, fleet_h, ctx.power_limits, ctx.nvlink_bw_limits,
+            nvlink_fit=ctx.nvlink_fit,
             controller=controller,
         ))
     return layout

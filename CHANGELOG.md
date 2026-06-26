@@ -24,9 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `Commands` field so the command input stays visible while you type.
 - **Fleet grid is now 2-D proportional** (`choose_grid` + shared `build_fleet_panel`):
   cards-per-row follows the window's aspect ratio (wide → more columns, tall → more
-  rows, ragged grids like 2+1), no longer capped at two per row. The focused-mode
-  mini-fleet uses the **same** layout code, so it also packs 2+ cards per row when
-  its pane is wide enough (instead of always one per row).
+  rows, ragged grids like 2+1), no longer capped at two per row.
+- **Focused-mode mini-fleet is vertical again**: the left pane now forces one GPU
+  card per row, while the main fleet keeps the proportional grid layout.
+- **DCGM NVLink source selection** now prefers field `449` and falls back to
+  `1011`/`1012` only when `449` has no usable data.
 - **Minimum-size gate** shows an ASCII-box placeholder ("Terminal Too Small" with a
   per-dimension "Width/Height Too Narrow/Short" or "Is OK" line) instead of squeezing
   the values; the title/border are yellow and each dimension is green when OK / red
@@ -58,6 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reflow into 4 / 2 / 1 columns by available width instead of jamming, and the
   mini-fleet is dropped (the focused panel goes full width) when the window is too
   narrow to show both.
+- **`--sp-fast` NVLink sampling** can refresh NVLink at the requested `--poll`
+  interval while the full dashboard metrics stay on a 1 s base stream.
 
 ### Added
 - `tests/test_status_labels.py` — guards that (a) no workload-status label exceeds
@@ -68,3 +72,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   squeezing, the dashboard shows a "Terminal too small" placeholder reporting current
   vs required **width and height** (flagging which dimension is short) instead of
   distorting the values.
+- `--sp-fast` for lightweight fast NVLink polling and `--nvlink-fit` for displaying
+  and exporting a fitted NVLink estimate (`nvlink_est_gbps`).

@@ -122,3 +122,13 @@ def update_history(history: HistoryStore, records: Iterable[ComputedRecord]) -> 
         )
         if nvlink_gbps is not None:
             history.push(gpu_id, "nvlink_gbps", nvlink_gbps)
+
+
+def update_nvlink_history(history: HistoryStore, records: Iterable[ComputedRecord]) -> None:
+    """Push only the NVLink GB/s series for fast NVLink-only ticks."""
+    for rec in records:
+        nvlink_gbps = bytes_per_second_to_gigabytes(
+            rec.record.gpu_nvlink_aggregate_throughput_bytes_per_second
+        )
+        if nvlink_gbps is not None:
+            history.push(rec.gpu_id, "nvlink_gbps", nvlink_gbps)

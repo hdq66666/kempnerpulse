@@ -16,6 +16,7 @@ from kempnerpulse.config import (
     Config,
     build_config,
     build_parser,
+    parse_nvlink_fit,
     parse_weights,
     validate_poll,
 )
@@ -34,6 +35,8 @@ def test_defaults():
     assert cfg.once is False
     assert cfg.focus_gpu is None
     assert cfg.export_spec is None
+    assert cfg.sp_fast is False
+    assert cfg.nvlink_fit is None
     # Default preset is AI.
     assert cfg.preset_name == "ai"
     assert cfg.weights == PRESETS["ai"]
@@ -110,6 +113,22 @@ def test_parse_weights_normalizes():
     assert vals == pytest.approx((0.25, 0.25, 0.25, 0.25))
 
 
+def test_parse_nvlink_fit():
+    assert parse_nvlink_fit("1.37") == pytest.approx((1.37, 0.0))
+    assert parse_nvlink_fit("1.37,2.5") == pytest.approx((1.37, 2.5))
+
+
+def test_parse_nvlink_fit_errors():
+    import argparse
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_nvlink_fit("0")
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_nvlink_fit("a")
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_nvlink_fit("1,2,3")
+
+
 # ── export, history, gpus ─────────────────────────────────────────────────────
 
 def test_export_const_default():
@@ -126,6 +145,17 @@ def test_export_all_and_custom():
 
 def test_export_absent_is_none():
     assert build_config([]).export_spec is None
+
+
+def test_sp_fast_and_nvlink_fit_config():
+    cfg = build_config(["--sp-fast", "--nvlink-fit", "1.37,2.0"])
+    assert cfg.sp_fast is True
+    assert cfg.nvlink_fit == pytest.approx((1.37, 2.0))
+
+
+def test_sp_fast_requires_dcgm_backend():
+    with pytest.raises(SystemExit):
+        build_config(["--backend", "prometheus", "--sp-fast"])
 
 
 def test_history_floor():
@@ -157,6 +187,7 @@ def test_build_parser_introspectable():
     assert ns.backend == "dcgm"
     assert ns.poll is None
     assert ns.history == 120
+    assert ns.sp_fast is False
 
 
 # ── validate_poll ─────────────────────────────────────────────────────────────

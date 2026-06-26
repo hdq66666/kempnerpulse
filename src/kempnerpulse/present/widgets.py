@@ -25,7 +25,7 @@ from .controller import CommandController, SCROLL_PAGE  # noqa: F401  (SCROLL_PA
 from .format import (
     bytes_per_second_to_gigabytes,
     fmt_bytes_per_s,
-    fmt_gbps,
+    fmt_nvlink_gbps,
     fmt_joules,
     fmt_mhz,
     fmt_mib,
@@ -252,6 +252,7 @@ def gpu_card(
     power_limit: Optional[float] = None,
     nvlink_limit: Optional[float] = None,
     detail_columns: int = 2,
+    nvlink_fit: Optional[Tuple[float, float]] = None,
 ) -> Panel:
     gpu = rec.gpu_id
 
@@ -271,7 +272,10 @@ def gpu_card(
     _max_t = max(t for t in (_gpu_t, _mem_t) if t is not None) if (_gpu_t is not None or _mem_t is not None) else None
     memcpy_pct = _pct_of(rec, "gpu_memory_copy_engine_busy_time_fraction")
     nvlink_gbps = _nvlink_gbps(rec)
-    nvlink_text = "N/A" if nvlink_limit is None and nvlink_gbps is None else fmt_gbps(nvlink_gbps)
+    nvlink_text = (
+        "N/A" if nvlink_limit is None and nvlink_gbps is None
+        else fmt_nvlink_gbps(nvlink_gbps, nvlink_fit)
+    )
     _replay = rec.pcie_replay_rate_per_second
 
     left_rows = [
@@ -400,6 +404,7 @@ def fleet_panel(
     detail_columns: int = 2,
     power_limits: Optional[Dict[str, float]] = None,
     nvlink_bw_limits: Optional[Dict[str, float]] = None,
+    nvlink_fit: Optional[Tuple[float, float]] = None,
     avail_height: Optional[int] = None,
     controller: Optional[CommandController] = None,
 ) -> Panel:
@@ -408,7 +413,8 @@ def fleet_panel(
     for idx in range(0, len(records), cards_per_row):
         rows.append([
             gpu_card(r, history, (power_limits or {}).get(r.gpu_id),
-                     (nvlink_bw_limits or {}).get(r.gpu_id), detail_columns=detail_columns)
+                     (nvlink_bw_limits or {}).get(r.gpu_id), detail_columns=detail_columns,
+                     nvlink_fit=nvlink_fit)
             for r in records[idx: idx + cards_per_row]
         ])
 
@@ -444,14 +450,20 @@ def build_fleet_panel(
     avail_height: int,
     power_limits: Optional[Dict[str, float]] = None,
     nvlink_bw_limits: Optional[Dict[str, float]] = None,
+    nvlink_fit: Optional[Tuple[float, float]] = None,
     controller: Optional[CommandController] = None,
+    force_single_column: bool = False,
 ) -> Panel:
     """Lay out the fleet for an available width×height. Shared by the main fleet
     view and the focus-mode mini-fleet so both behave identically."""
-    cols, _rows = choose_grid(len(records), avail_width, avail_height)
+    if force_single_column:
+        cols = 1
+    else:
+        cols, _rows = choose_grid(len(records), avail_width, avail_height)
     detail_columns = 2 if avail_width // max(1, cols) >= CARD_FULL_WIDTH else 1
     return fleet_panel(records, history, cards_per_row=cols, detail_columns=detail_columns,
                        power_limits=power_limits, nvlink_bw_limits=nvlink_bw_limits,
+                       nvlink_fit=nvlink_fit,
                        avail_height=avail_height, controller=controller)
 
 
@@ -685,6 +697,7 @@ def selected_gpu_panel(
     power_limit: Optional[float] = None,
     nvlink_limit: Optional[float] = None,
     console_width: int = 200,
+    nvlink_fit: Optional[Tuple[float, float]] = None,
 ) -> Panel:
     gpu = rec.gpu_id
     title = f"Focused GPU {gpu}"
@@ -754,7 +767,7 @@ def selected_gpu_panel(
                 bar = Text("")
                 trend = Text("")
             else:
-                now = Text(fmt_gbps(value), style=nv_style)
+                now = Text(fmt_nvlink_gbps(value, nvlink_fit), style=nv_style)
                 nv_cap = nvlink_max if nvlink_max and nvlink_max > 0 else 400.0
                 pct_for_bar = 0.0 if value is None else min(100.0, value / nv_cap * 100.0)
                 bar = make_bar(pct_for_bar, 22, style_override=nv_style)
@@ -774,7 +787,7 @@ def selected_gpu_panel(
         Text(f"Status: {rec.status_line}", style=rec.health_style),
         Text(f"PCIe RX: {fmt_bytes_per_s(_raw(rec, 'gpu_pcie_receive_throughput_bytes_per_second'))}", style="cyan"),
         Text(f"PCIe TX: {fmt_bytes_per_s(_raw(rec, 'gpu_pcie_transmit_throughput_bytes_per_second'))}", style="cyan"),
-        Text(f"NVLink Δ: {'N/A' if nvlink_max is None and nvlink_gbps is None else fmt_gbps(nvlink_gbps)}",
+        Text(f"NVLink Δ: {'N/A' if nvlink_max is None and nvlink_gbps is None else fmt_nvlink_gbps(nvlink_gbps, nvlink_fit)}",
              style=nvlink_util_style(nvlink_gbps, nvlink_max)),
         Text(f"Energy: {fmt_joules(_energy_j(rec))}", style="magenta"),
         Text(f"Power: {fmt_watts(_raw(rec, 'gpu_board_power_draw_watts'))}",

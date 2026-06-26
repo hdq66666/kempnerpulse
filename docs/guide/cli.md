@@ -15,6 +15,8 @@ kp [options]
 | `--source SOURCE` | `http://localhost:9400/metrics` | A `dcgm-exporter` HTTP `/metrics` endpoint or a local file. For `--backend replay`, the path to a saved `dcgmi dmon` capture. |
 | `--backend {dcgm,prometheus,replay}` | `dcgm` | Metric source. See {doc}`backends`. |
 | `--poll POLL` | `0.1` (dcgm) / `1.0` (prometheus) | Sampling interval in seconds. The `dcgm` backend is honored down to a 100 ms floor; `prometheus` requires `>= 1.0`. |
+| `--sp-fast` | off | With `--backend dcgm`, sample NVLink at `--poll` in a lightweight stream while normal dashboard metrics use a 1 s stream. |
+| `--nvlink-fit SCALE[,OFFSET]` | — | Display/export `nvlink_est_gbps` using `raw * SCALE + OFFSET`; raw `nvlink_gbps` is preserved. |
 | `--history HISTORY` | `120` | Samples kept for sparkline history. |
 | `--focus-gpu ID` | — | Start in the focused single-GPU view. |
 | `--once` | off | Render one snapshot and exit. |
@@ -71,6 +73,8 @@ kp --hpc-weights                               # HPC weight preset
 kp --gpus 2,3                                  # only GPUs 2 and 3
 kp --once                                      # single snapshot
 kp --backend dcgm --export all --poll 0.1      # high-res CSV capture
+kp --backend dcgm --poll 0.1 --sp-fast         # fast NVLink refresh
+kp --backend dcgm --poll 0.1 --sp-fast --nvlink-fit 1.37
 kp --backend prometheus --source http://host:9400/metrics --poll 2
 kp --backend replay --source capture.txt --once
 ```

@@ -12,7 +12,7 @@ start the recorder before a job launches so the trace covers job startup.
 # Default columns — pipe to file or watch on terminal
 kempnerpulse --export > metrics.csv
 
-# All 34 columns
+# All 35 columns
 kempnerpulse --export all > metrics.csv
 
 # Custom column selection
@@ -26,6 +26,9 @@ kempnerpulse --export all --poll 5 --gpus 0,1 > metrics.csv
 
 # High-resolution sampling via the dcgm backend (down to 100ms)
 kempnerpulse --backend dcgm --export all --poll 0.1 > metrics.csv
+
+# Fast NVLink sampling with a fitted estimate column
+kempnerpulse --backend dcgm --export all --poll 0.1 --sp-fast --nvlink-fit 1.37 > metrics.csv
 ```
 
 ## Sampling Rate (`--poll`)
@@ -35,7 +38,7 @@ kempnerpulse --backend dcgm --export all --poll 0.1 > metrics.csv
 | Backend | Effective range | Notes |
 |---------|----------------|-------|
 | `dcgm` (recommended for export) | `0.1s` – any | Drives a persistent `dcgmi dmon` stream at the requested interval. Values below 100ms are clamped with a notice — DCGM's profiling counters (`DCGM_FI_PROF_*`, i.e. SM/Tensor/DRAM Active and friends) refresh at ~10Hz via the shared hardware-counter multiplexer, so smaller intervals just produce blank profiling rows. One CSV row-set is emitted per dcgmi tick — no spawned subprocess per cycle, no skew. |
-| `prometheus` (default) | `>= 1.0s` | dcgm-exporter scrapes profiling fields at ~30s, so sub-second `--poll` values produce duplicate rows with no new data. Sub-second values are rejected with a warning. |
+| `prometheus` | `>= 1.0s` | dcgm-exporter scrapes profiling fields at ~30s, so sub-second `--poll` values produce duplicate rows with no new data. Sub-second values are rejected with a warning. |
 
 For high-resolution profiling traces (e.g., capturing tensor activity at
 100ms resolution to plot offline), use `--backend dcgm --poll 0.1`. Note
@@ -84,6 +87,7 @@ pick a custom set.
 | `pcie_rx_bytes_s` | PCIe receive (bytes/s) |
 | `pcie_tx_bytes_s` | PCIe transmit (bytes/s) |
 | `nvlink_gbps` | NVLink throughput (GB/s) |
+| `nvlink_est_gbps` | Fitted NVLink estimate from `--nvlink-fit` |
 | `sm_clock_mhz` | SM clock (MHz) |
 | `mem_clock_mhz` | Memory clock (MHz) |
 | `pcie_replay_rate_s` | PCIe replay rate (/s) |
@@ -98,9 +102,7 @@ pick a custom set.
 
 - **Timestamp**: Unix epoch seconds with centisecond precision (e.g.
   `1743782400.12`). Convert with `pd.to_datetime(df.timestamp, unit='s')`.
-- **GPU filtering**: Only GPUs where the current user has at least one running
-  compute process are included. If no processes are found, only the header is
-  output and a diagnostic message is printed to stderr.
+- **GPU filtering**: Rows are emitted for every GPU in the active visibility set.
 - **Rate fields**: `pcie_replay_rate_s` requires two samples to compute a
   rate, so it will be empty on the first row.
 - **Missing values**: Exported as empty strings in the CSV.

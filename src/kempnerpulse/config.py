@@ -71,6 +71,8 @@ class Config:
     once: bool
     focus_gpu: Optional[str]
     history_length: int
+    sp_fast: bool = False
+    nvlink_fit: Optional[Tuple[float, float]] = None
 
 
 def _pkg_version() -> str:
@@ -110,6 +112,21 @@ def parse_weights(raw: str) -> Weights:
     if abs(total - 1.0) > 1e-6:
         vals = tuple(v / total for v in vals)
     return vals  # type: ignore[return-value]
+
+
+def parse_nvlink_fit(raw: str) -> Tuple[float, float]:
+    """Validate ``--nvlink-fit`` as ``SCALE`` or ``SCALE,OFFSET``."""
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if len(parts) not in (1, 2):
+        raise argparse.ArgumentTypeError("--nvlink-fit requires SCALE or SCALE,OFFSET")
+    try:
+        scale = float(parts[0])
+        offset = float(parts[1]) if len(parts) == 2 else 0.0
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--nvlink-fit values must be numeric") from exc
+    if scale <= 0:
+        raise argparse.ArgumentTypeError("--nvlink-fit SCALE must be positive")
+    return scale, offset
 
 
 _HELP_EPILOG = """
@@ -168,6 +185,8 @@ Examples:
   kempnerpulse --source http://otherhost:9400/metrics
   kempnerpulse --backend dcgm --poll 0.5
   kempnerpulse --backend dcgm --export all --poll 0.1
+  kempnerpulse --backend dcgm --poll 0.1 --sp-fast
+  kempnerpulse --backend dcgm --poll 0.1 --sp-fast --nvlink-fit 1.37
 """
 
 
@@ -229,6 +248,25 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=120,
         help="Number of samples kept for sparkline history. Default: 120",
+    )
+    parser.add_argument(
+        "--sp-fast",
+        action="store_true",
+        help=(
+            "With --backend dcgm, sample NVLink at --poll in a lightweight stream "
+            "while normal dashboard metrics keep a 1s sampling interval. Uses "
+            "field 449 when readable and falls back to 1011/1012 only when needed."
+        ),
+    )
+    parser.add_argument(
+        "--nvlink-fit",
+        type=parse_nvlink_fit,
+        default=None,
+        metavar="SCALE[,OFFSET]",
+        help=(
+            "Display/export a fitted NVLink estimate using est = raw * SCALE + "
+            "OFFSET. Raw nvlink_gbps is preserved; use nvlink_est_gbps for CSV."
+        ),
     )
     parser.add_argument(
         "--focus-gpu",
@@ -308,6 +346,8 @@ def build_config(argv: Optional[list[str]] = None) -> Config:
     args = parser.parse_args(argv)
 
     backend = _BACKEND_BY_NAME[args.backend]
+    if args.sp_fast and backend is not BackendKind.DCGMI:
+        parser.error("--sp-fast requires --backend dcgm")
 
     poll_seconds = args.poll
     if poll_seconds is None:
@@ -336,6 +376,8 @@ def build_config(argv: Optional[list[str]] = None) -> Config:
         once=args.once,
         focus_gpu=args.focus_gpu,
         history_length=max(MIN_HISTORY_LENGTH, args.history),
+        sp_fast=args.sp_fast,
+        nvlink_fit=args.nvlink_fit,
     )
 
 

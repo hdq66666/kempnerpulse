@@ -13,7 +13,7 @@ the single-file implementation so the rendered output is byte-for-byte familiar.
 from __future__ import annotations
 
 import math
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from rich.text import Text
 
@@ -133,6 +133,30 @@ def fmt_gbps(v: Optional[float], digits: int = 2) -> str:
     return f"{v:.{digits}f}GB/s"
 
 
+def apply_nvlink_fit(
+    gbps: Optional[float],
+    fit: Optional[Tuple[float, float]],
+) -> Optional[float]:
+    if gbps is None:
+        return None
+    if fit is None:
+        return gbps
+    scale, offset = fit
+    return gbps * scale + offset
+
+
+def fmt_nvlink_gbps(
+    gbps: Optional[float],
+    fit: Optional[Tuple[float, float]] = None,
+) -> str:
+    if gbps is None or math.isnan(gbps):
+        return "--"
+    est = apply_nvlink_fit(gbps, fit)
+    if fit is None or est is None or math.isnan(est):
+        return fmt_gbps(gbps)
+    return f"{gbps:.1f} {est:.1f}GB/s↑"
+
+
 def fmt_joules(v: Optional[float]) -> str:
     if v is None:
         return "--"
@@ -218,11 +242,11 @@ def power_style(w: Optional[float]) -> str:
 def io_rate_style_gbps(v: Optional[float]) -> str:
     if v is None:
         return "dim"
-    if v >= 200:
-        return "bold red"
     if v >= 100:
+        return "bold red"
+    if v >= 50:
         return "bold yellow"
-    if v >= 25:
+    if v >= 10:
         return "bold green"
     if v > 0:
         return "cyan"
@@ -230,11 +254,8 @@ def io_rate_style_gbps(v: Optional[float]) -> str:
 
 
 def nvlink_util_style(gbps: Optional[float], limit_gbps: Optional[float]) -> str:
-    """Colour an NVLink value by % of its theoretical max (usage_style scale)."""
-    if gbps is None or limit_gbps is None or limit_gbps <= 0:
-        return io_rate_style_gbps(gbps)
-    pct = gbps / limit_gbps * 100.0
-    return usage_style(pct)
+    """Colour an NVLink value by absolute GB/s."""
+    return io_rate_style_gbps(gbps)
 
 
 # ── Sparkline & bar ───────────────────────────────────────────────────────────

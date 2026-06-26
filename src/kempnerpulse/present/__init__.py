@@ -26,7 +26,7 @@ CSV export:
 * ``resolve_columns(spec) -> [(name, extractor), ...]`` — resolve ``"default"``
   / ``"all"`` / a comma-list to an ordered column set.
 * ``csv_header(columns) -> [str]`` and
-  ``csv_row(record, timestamp, columns) -> [str]`` — emit the header and one
+  ``csv_row(record, timestamp, columns, nvlink_fit=None) -> [str]`` — emit the header and one
   row, with units/precision matching the documented export schema.
 * ``UnknownExportColumns`` — raised by ``resolve_columns`` on a bad spec.
 """
@@ -40,7 +40,7 @@ from .csv_writer import (
     csv_row,
     resolve_columns,
 )
-from .history import DEFAULT_HISTORY_MAXLEN, HistoryStore, update_history
+from .history import DEFAULT_HISTORY_MAXLEN, HistoryStore, update_history, update_nvlink_history
 from .tui import DEFAULT_WEIGHTS, SummaryContext, footer_panel, render_dashboard
 from .widgets import GpuProcess
 
@@ -52,6 +52,7 @@ __all__ = [
     "cbreak_stdin",
     "HistoryStore",
     "update_history",
+    "update_nvlink_history",
     "GpuProcess",
     # CSV export
     "resolve_columns",

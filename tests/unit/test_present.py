@@ -165,6 +165,10 @@ def test_csv_all_columns_values_units_and_precision():
     assert row["pcie_tx_bytes_s"] == "2500000000.0000"
     # NVLink GB/s = bytes/s / 1e9, .4f
     assert row["nvlink_gbps"] == "900.0000"
+    assert row["nvlink_est_gbps"] == ""
+    row_fit = dict(zip(header, csv_row(rec, 10.0, cols, nvlink_fit=(1.37, 2.0))))
+    assert row_fit["nvlink_gbps"] == "900.0000"
+    assert row_fit["nvlink_est_gbps"] == "1235.0000"
     # Power / temp / clock raw .4f
     assert row["power_w"] == "351.0000"
     assert row["gpu_temp_c"] == "62.0000"
@@ -196,6 +200,7 @@ def test_csv_na_stays_empty_not_zero():
         "gpu_util_pct", "mem_used_mib", "power_w", "gpu_temp_c", "mem_temp_c",
         "sm_occupancy_pct", "fp16_pipe_pct", "fp32_pipe_pct", "fp64_pipe_pct",
         "memcpy_util_pct", "pcie_rx_bytes_s", "pcie_tx_bytes_s", "nvlink_gbps",
+        "nvlink_est_gbps",
         "sm_clock_mhz", "mem_clock_mhz", "pcie_replay_rate_s", "energy_j",
         "mem_total_mib", "mem_used_pct", "tc_hmma_pct", "tc_imma_pct",
         "tc_dfma_pct", "tc_dmma_pct", "tc_qmma_pct",
@@ -270,6 +275,35 @@ def test_render_dashboard_all_view_modes(mode):
     console = Console(file=io.StringIO(), width=200, height=50)
     console.print(out)
     assert console.file.getvalue()
+
+
+def test_focus_view_forces_mini_fleet_single_column(monkeypatch):
+    from rich.panel import Panel
+    from kempnerpulse.present import tui
+
+    calls = []
+
+    def fake_build_fleet_panel(*args, **kwargs):
+        calls.append(kwargs)
+        return Panel("fleet")
+
+    monkeypatch.setattr(tui, "build_fleet_panel", fake_build_fleet_panel)
+    records = [_fully_populated()] + [
+        _computed(gpu_index=i, entity_gpu_uuid=f"GPU-{i}") for i in range(1, 4)
+    ]
+    history = HistoryStore()
+    controller = CommandController()
+    controller.focus_gpu = "0"
+    out = render_dashboard(
+        records, history,
+        console_width=240, console_height=60,
+        controller=controller, summary_context=SummaryContext(),
+    )
+    console = Console(file=io.StringIO(), width=240, height=60)
+    console.print(out)
+
+    assert calls
+    assert calls[0]["force_single_column"] is True
 
 
 def test_render_dashboard_too_small_gate():

@@ -1,7 +1,11 @@
 """Parser tests for the dcgmi (direct DCGM) reader."""
 import os
 
-from kempnerpulse.reader.dcgmi import parse_dmon_block
+from kempnerpulse.reader.dcgmi import (
+    DCGM_DMON_NVLINK_PROFILE_FIELDS,
+    dcgm_metric_names,
+    parse_dmon_block,
+)
 
 _FIXTURE = os.path.join(
     os.path.dirname(__file__), "..", "fixtures", "dcgmi_dmon_2tick.txt"
@@ -47,3 +51,15 @@ def test_skips_headers_and_blank_lines():
     assert len(records) == 1
     assert records[0].entity_id == "0"
     assert records[0].fields["DCGM_FI_DEV_SM_CLOCK"] == 1.0
+
+
+def test_custom_metric_names_parse_requested_columns():
+    text = "#Entity NVLTX NVLRX\nID\nGPU 0 110000000000 120000000000\n"
+    records = parse_dmon_block(
+        text,
+        metric_names=dcgm_metric_names(DCGM_DMON_NVLINK_PROFILE_FIELDS),
+    )
+    assert records[0].fields == {
+        "DCGM_FI_PROF_NVLINK_TX_BYTES": 110000000000.0,
+        "DCGM_FI_PROF_NVLINK_RX_BYTES": 120000000000.0,
+    }

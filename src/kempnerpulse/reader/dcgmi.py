@@ -20,7 +20,7 @@ import os
 import re
 import subprocess
 import time
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from .base import (
     Backend,
@@ -63,8 +63,61 @@ DCGM_DMON_FIELDS: Tuple[Tuple[int, str], ...] = (
     (1012, "DCGM_FI_PROF_NVLINK_RX_BYTES"),         # bytes/sec
 )
 
-DCGM_DMON_FIELD_IDS = ",".join(str(fid) for fid, _ in DCGM_DMON_FIELDS)
-DCGM_DMON_METRIC_NAMES = [name for _, name in DCGM_DMON_FIELDS]
+NVLINK_TOTAL_METRIC = "DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL"
+NVLINK_TX_METRIC = "DCGM_FI_PROF_NVLINK_TX_BYTES"
+NVLINK_RX_METRIC = "DCGM_FI_PROF_NVLINK_RX_BYTES"
+
+DCGM_DMON_NVLINK_TOTAL_FIELDS: Tuple[Tuple[int, str], ...] = (
+    (449, NVLINK_TOTAL_METRIC),
+)
+DCGM_DMON_NVLINK_PROFILE_FIELDS: Tuple[Tuple[int, str], ...] = (
+    (1011, NVLINK_TX_METRIC),
+    (1012, NVLINK_RX_METRIC),
+)
+DCGM_NVLINK_METRIC_NAMES = {
+    NVLINK_TOTAL_METRIC,
+    NVLINK_TX_METRIC,
+    NVLINK_RX_METRIC,
+}
+
+
+def combine_dcgm_fields(*groups: Tuple[Tuple[int, str], ...]) -> Tuple[Tuple[int, str], ...]:
+    out: List[Tuple[int, str]] = []
+    seen: set[int] = set()
+    for group in groups:
+        for field_id, metric_name in group:
+            if field_id in seen:
+                continue
+            seen.add(field_id)
+            out.append((field_id, metric_name))
+    return tuple(out)
+
+
+def dcgm_field_ids(fields: Tuple[Tuple[int, str], ...]) -> str:
+    return ",".join(str(fid) for fid, _ in fields)
+
+
+def dcgm_metric_names(fields: Tuple[Tuple[int, str], ...]) -> Tuple[str, ...]:
+    return tuple(name for _, name in fields)
+
+
+DCGM_DMON_NO_NVLINK_FIELDS = tuple(
+    (fid, name) for fid, name in DCGM_DMON_FIELDS
+    if name not in DCGM_NVLINK_METRIC_NAMES
+)
+DCGM_DMON_WITH_NVLINK_TOTAL_FIELDS = combine_dcgm_fields(
+    DCGM_DMON_NO_NVLINK_FIELDS, DCGM_DMON_NVLINK_TOTAL_FIELDS
+)
+DCGM_DMON_WITH_NVLINK_PROFILE_FIELDS = combine_dcgm_fields(
+    DCGM_DMON_NO_NVLINK_FIELDS, DCGM_DMON_NVLINK_PROFILE_FIELDS
+)
+
+DCGM_DMON_FIELD_IDS = dcgm_field_ids(DCGM_DMON_FIELDS)
+DCGM_DMON_METRIC_NAMES = list(dcgm_metric_names(DCGM_DMON_FIELDS))
+
+DCGM_NVLINK_SOURCE_TOTAL = "total"
+DCGM_NVLINK_SOURCE_PROFILE = "profile"
+DCGM_NVLINK_SOURCE_NONE = "none"
 
 # DCGM profiling counters (DCGM_FI_PROF_*) refresh at ~10 Hz through the shared
 # hardware-counter multiplexer. Below ~100 ms, ``dcgmi dmon`` returns mostly
@@ -151,6 +204,7 @@ def parse_dmon_block(
     source_version: str = "dcgmi",
     timestamp: Optional[float] = None,
     wallclock: Optional[float] = None,
+    metric_names: Sequence[str] = DCGM_DMON_METRIC_NAMES,
 ) -> List[RawRecord]:
     """Parse ``dcgmi dmon`` rows into ``RawRecord`` objects, one per ``GPU <id>`` row.
 
@@ -177,7 +231,7 @@ def parse_dmon_block(
             continue
         gpu_id = parts[1]
         fields: Dict[str, Optional[float]] = {}
-        for col_idx, metric_name in enumerate(DCGM_DMON_METRIC_NAMES):
+        for col_idx, metric_name in enumerate(metric_names):
             val_idx = col_idx + 2  # skip "GPU" and the id
             if val_idx >= len(parts):
                 break
@@ -197,6 +251,7 @@ def run_dmon_once(
     gpu_ids: Optional[List[str]] = None,
     interval_ms: int = 100,
     timeout: float = 15.0,
+    field_ids: str = DCGM_DMON_FIELD_IDS,
 ) -> str:
     """Run one ``dcgmi dmon -c 2`` collection and return its raw stdout text.
 
@@ -205,7 +260,7 @@ def run_dmon_once(
     a downstream last-non-``None``-wins merge recover the real values.
     """
     cmd = ["dcgmi", "dmon", "-c", "2", "-d", str(interval_ms),
-           "-e", DCGM_DMON_FIELD_IDS]
+           "-e", field_ids]
     if gpu_ids:
         cmd.extend(["-i", ",".join(f"gpu:{gid}" for gid in gpu_ids)])
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -222,13 +277,80 @@ def read_once(
     gpu_ids: Optional[List[str]] = None,
     interval_ms: int = 100,
     timeout: float = 15.0,
+    field_ids: str = DCGM_DMON_FIELD_IDS,
+    metric_names: Sequence[str] = DCGM_DMON_METRIC_NAMES,
 ) -> List[RawRecord]:
     """Collect a single tick from ``dcgmi dmon`` as ``RawRecord`` objects.
 
     Returns the records from both requested samples in order; the caller's
     last-non-``None``-wins merge keeps the valid second-tick values.
     """
-    return parse_dmon_block(run_dmon_once(gpu_ids, interval_ms, timeout))
+    return parse_dmon_block(
+        run_dmon_once(gpu_ids, interval_ms, timeout, field_ids),
+        metric_names=metric_names,
+    )
+
+
+def _records_have_any_metric(records: Iterable[RawRecord], metric_names: Iterable[str]) -> bool:
+    wanted = set(metric_names)
+    for record in records:
+        if any(record.fields.get(name) is not None for name in wanted):
+            return True
+    return False
+
+
+def _probe_dcgm_field_group(
+    gpu_ids: Optional[List[str]],
+    fields: Tuple[Tuple[int, str], ...],
+    metric_names: Iterable[str],
+    interval_ms: int = DCGM_STREAM_MIN_INTERVAL_MS,
+) -> bool:
+    if not fields:
+        return False
+    try:
+        records = read_once(
+            gpu_ids=gpu_ids,
+            interval_ms=interval_ms,
+            field_ids=dcgm_field_ids(fields),
+            metric_names=dcgm_metric_names(fields),
+        )
+    except Exception:
+        return False
+    return _records_have_any_metric(records, metric_names)
+
+
+def probe_dcgm_nvlink_source(gpu_ids: Optional[List[str]]) -> str:
+    """Choose the DCGM NVLink source for this GPU selection.
+
+    Field 449 is preferred. The 1011/1012 profiling pair is requested only when
+    449 returns no usable data during startup probing. A zero value counts as
+    usable because it means the field is readable.
+    """
+    if _probe_dcgm_field_group(gpu_ids, DCGM_DMON_NVLINK_TOTAL_FIELDS, (NVLINK_TOTAL_METRIC,)):
+        return DCGM_NVLINK_SOURCE_TOTAL
+    if _probe_dcgm_field_group(
+        gpu_ids,
+        DCGM_DMON_NVLINK_PROFILE_FIELDS,
+        (NVLINK_TX_METRIC, NVLINK_RX_METRIC),
+    ):
+        return DCGM_NVLINK_SOURCE_PROFILE
+    return DCGM_NVLINK_SOURCE_NONE
+
+
+def dcgm_nvlink_fields_for_source(source: str) -> Tuple[Tuple[int, str], ...]:
+    if source == DCGM_NVLINK_SOURCE_TOTAL:
+        return DCGM_DMON_NVLINK_TOTAL_FIELDS
+    if source == DCGM_NVLINK_SOURCE_PROFILE:
+        return DCGM_DMON_NVLINK_PROFILE_FIELDS
+    return tuple()
+
+
+def dcgm_dashboard_fields_for_nvlink_source(source: str) -> Tuple[Tuple[int, str], ...]:
+    if source == DCGM_NVLINK_SOURCE_TOTAL:
+        return DCGM_DMON_WITH_NVLINK_TOTAL_FIELDS
+    if source == DCGM_NVLINK_SOURCE_PROFILE:
+        return DCGM_DMON_WITH_NVLINK_PROFILE_FIELDS
+    return DCGM_DMON_NO_NVLINK_FIELDS
 
 
 class DcgmiBackend:
@@ -247,6 +369,8 @@ class DcgmiBackend:
         self._poll_ms: int = DCGM_STREAM_MIN_INTERVAL_MS
         self._source_version: str = "dcgmi"
         self._closed: bool = False
+        self._field_ids: str = DCGM_DMON_FIELD_IDS
+        self._metric_names: Tuple[str, ...] = tuple(DCGM_DMON_METRIC_NAMES)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -255,9 +379,11 @@ class DcgmiBackend:
         self._poll_ms = max(
             DCGM_STREAM_MIN_INTERVAL_MS, int(round(config.poll_seconds * 1000))
         )
+        self._field_ids = config.dcgm_field_ids or DCGM_DMON_FIELD_IDS
+        self._metric_names = tuple(config.dcgm_metric_names or tuple(DCGM_DMON_METRIC_NAMES))
         self._closed = False
         cmd = ["dcgmi", "dmon", "-c", "0", "-d", str(self._poll_ms),
-               "-e", DCGM_DMON_FIELD_IDS]
+               "-e", self._field_ids]
         if self._gpu_ids:
             cmd.extend(["-i", ",".join(f"gpu:{gid}" for gid in self._gpu_ids)])
         # Dropping CUDA_VISIBLE_DEVICES suppresses dcgmi's multi-line stdout
@@ -351,6 +477,7 @@ class DcgmiBackend:
             source_version=self._source_version,
             timestamp=time.monotonic(),
             wallclock=time.time(),
+            metric_names=self._metric_names,
         )
 
     def _read_stderr_tail(self) -> str:
@@ -373,7 +500,7 @@ class DcgmiBackend:
     def caps(self) -> BackendCaps:
         return BackendCaps(
             kind=BackendKind.DCGMI,
-            fields=frozenset(DCGM_DMON_METRIC_NAMES),
+            fields=frozenset(self._metric_names),
         )
 
 

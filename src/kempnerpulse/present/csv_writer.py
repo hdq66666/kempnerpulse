@@ -26,12 +26,13 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 from ..compute.result import ComputedRecord
 from .format import (
+    apply_nvlink_fit,
     bytes_per_second_to_gigabytes,
     fraction_to_percent,
 )
 
 # A column extractor turns (record, timestamp) into the already-formatted cell.
-Extractor = Callable[[ComputedRecord, float], str]
+Extractor = Callable[[ComputedRecord, float, Optional[Tuple[float, float]]], str]
 
 
 def _fmt(value: Optional[float], digits: int) -> str:
@@ -51,62 +52,75 @@ def _short_model_name(name: str) -> str:
 
 def _percent_column(canonical_field: str, digits: int = 2) -> Extractor:
     """Extractor for a ``*_pct`` column sourced from a canonical fraction."""
-    def extract(rec: ComputedRecord, _ts: float) -> str:
+    def extract(rec: ComputedRecord, _ts: float, _fit=None) -> str:
         return _fmt(fraction_to_percent(getattr(rec.record, canonical_field)), digits)
     return extract
 
 
 def _raw_column(canonical_field: str, digits: int = 4) -> Extractor:
     """Extractor for a raw display-unit column (W, °C, MHz, MiB, bytes/s)."""
-    def extract(rec: ComputedRecord, _ts: float) -> str:
+    def extract(rec: ComputedRecord, _ts: float, _fit=None) -> str:
         return _fmt(getattr(rec.record, canonical_field), digits)
     return extract
 
 
-def _timestamp_column(rec: ComputedRecord, ts: float) -> str:
+def _timestamp_column(rec: ComputedRecord, ts: float, _fit=None) -> str:
     return f"{ts:.2f}"
 
 
-def _gpu_id_column(rec: ComputedRecord, _ts: float) -> str:
+def _gpu_id_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     return rec.gpu_id
 
 
-def _model_column(rec: ComputedRecord, _ts: float) -> str:
+def _model_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     return _short_model_name(rec.model_name or "")
 
 
-def _real_util_column(rec: ComputedRecord, _ts: float) -> str:
+def _real_util_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     return f"{rec.real_util:.2f}"
 
 
-def _status_column(rec: ComputedRecord, _ts: float) -> str:
+def _status_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     return rec.status_line
 
 
-def _health_column(rec: ComputedRecord, _ts: float) -> str:
+def _health_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     return rec.health
 
 
-def _mem_total_column(rec: ComputedRecord, _ts: float) -> str:
+def _mem_total_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     return _fmt(rec.memory_total_mebibytes, 1)
 
 
-def _mem_used_pct_column(rec: ComputedRecord, _ts: float) -> str:
+def _mem_used_pct_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     return _fmt(fraction_to_percent(rec.memory_used_fraction), 2)
 
 
-def _nvlink_gbps_column(rec: ComputedRecord, _ts: float) -> str:
+def _nvlink_gbps_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     gbps = bytes_per_second_to_gigabytes(
         rec.record.gpu_nvlink_aggregate_throughput_bytes_per_second
     )
     return _fmt(gbps, 4)
 
 
-def _pcie_replay_rate_column(rec: ComputedRecord, _ts: float) -> str:
+def _nvlink_est_gbps_column(
+    rec: ComputedRecord,
+    _ts: float,
+    nvlink_fit: Optional[Tuple[float, float]] = None,
+) -> str:
+    if nvlink_fit is None:
+        return ""
+    gbps = bytes_per_second_to_gigabytes(
+        rec.record.gpu_nvlink_aggregate_throughput_bytes_per_second
+    )
+    return _fmt(apply_nvlink_fit(gbps, nvlink_fit), 4)
+
+
+def _pcie_replay_rate_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     return _fmt(rec.pcie_replay_rate_per_second, 2)
 
 
-def _energy_column(rec: ComputedRecord, _ts: float) -> str:
+def _energy_column(rec: ComputedRecord, _ts: float, _fit=None) -> str:
     return _fmt(rec.record.gpu_board_total_energy_joules, 1)
 
 
@@ -141,6 +155,7 @@ CSV_COLUMNS: Tuple[Tuple[str, Extractor], ...] = (
     ("pcie_rx_bytes_s", _raw_column("gpu_pcie_receive_throughput_bytes_per_second")),
     ("pcie_tx_bytes_s", _raw_column("gpu_pcie_transmit_throughput_bytes_per_second")),
     ("nvlink_gbps", _nvlink_gbps_column),
+    ("nvlink_est_gbps", _nvlink_est_gbps_column),
     ("sm_clock_mhz", _raw_column("gpu_streaming_multiprocessor_clock_frequency_megahertz")),
     ("mem_clock_mhz", _raw_column("gpu_memory_clock_frequency_megahertz")),
     ("pcie_replay_rate_s", _pcie_replay_rate_column),
@@ -204,6 +219,7 @@ def csv_row(
     record: ComputedRecord,
     timestamp: float,
     columns: Sequence[Tuple[str, Extractor]],
+    nvlink_fit: Optional[Tuple[float, float]] = None,
 ) -> List[str]:
     """One CSV row for ``record`` at ``timestamp`` over the resolved columns."""
-    return [extractor(record, timestamp) for _name, extractor in columns]
+    return [extractor(record, timestamp, nvlink_fit) for _name, extractor in columns]

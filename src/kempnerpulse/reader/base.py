@@ -70,6 +70,8 @@ class ReaderConfig:
     gpu_ids: Optional[tuple[str, ...]] = None        # explicit physical IDs to monitor; None = discover
     all_gpus: bool = False                           # ignore CUDA_VISIBLE_DEVICES / SLURM_JOB_GPUS
     timeout: float = 5.0
+    dcgm_field_ids: Optional[str] = None             # dcgmi-only: comma-separated field ids
+    dcgm_metric_names: Optional[tuple[str, ...]] = None  # dcgmi-only: parser names matching field ids
 
 
 @runtime_checkable
